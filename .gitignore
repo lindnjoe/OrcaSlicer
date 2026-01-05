@@ -43,3 +43,5 @@ test.js
 /.cache/
 .clangd
 internal_docs/
+# Sparkle auto-update test artifacts
+/.sparkle-test/

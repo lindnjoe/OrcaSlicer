@@ -17,8 +17,8 @@ if(APPLE)
         CONFIGURE_COMMAND ""
         BUILD_COMMAND ""
         INSTALL_COMMAND ${CMAKE_COMMAND} -E make_directory ${DESTDIR}/Frameworks
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            <SOURCE_DIR>/Sparkle.framework ${DESTDIR}/Frameworks/Sparkle.framework
+        # Use ditto to preserve symlinks in framework bundle (cmake -E copy_directory breaks symlinks)
+        COMMAND ditto <SOURCE_DIR>/Sparkle.framework ${DESTDIR}/Frameworks/Sparkle.framework
         # Also install the Sparkle CLI tools (sign_update, generate_appcast) for CI/CD signing
         COMMAND ${CMAKE_COMMAND} -E make_directory ${DESTDIR}/bin
         COMMAND ${CMAKE_COMMAND} -E copy <SOURCE_DIR>/bin/sign_update ${DESTDIR}/bin/sign_update

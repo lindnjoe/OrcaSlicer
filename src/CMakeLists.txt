@@ -269,7 +269,8 @@ else ()
             endif()
             add_custom_command(TARGET OrcaSlicer POST_BUILD
                 COMMAND ${CMAKE_COMMAND} -E make_directory "${BUNDLE_FRAMEWORKS_DIR}"
-                COMMAND ${CMAKE_COMMAND} -E copy_directory "${SPARKLE_FRAMEWORK}" "${BUNDLE_FRAMEWORKS_DIR}/Sparkle.framework"
+                # Use ditto to preserve symlinks in framework bundle (cmake -E copy_directory breaks symlinks)
+                COMMAND ditto "${SPARKLE_FRAMEWORK}" "${BUNDLE_FRAMEWORKS_DIR}/Sparkle.framework"
                 COMMENT "Embedding Sparkle.framework into app bundle"
                 VERBATIM)
             message(STATUS "Sparkle framework will be embedded: ${SPARKLE_FRAMEWORK}")

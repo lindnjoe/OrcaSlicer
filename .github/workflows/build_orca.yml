@@ -88,8 +88,8 @@ jobs:
       - name: Install tools mac
         if: inputs.os == 'orca-macos-arm64'
         run: |
-          brew install libtool
-          brew list
+          # brew install libtool
+          # brew list
           mkdir -p ${{ github.workspace }}/deps/build
 
       # - name: Free disk space

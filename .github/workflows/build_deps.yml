@@ -77,8 +77,8 @@ jobs:
         if: inputs.os == 'orca-macos-arm64'
         working-directory: ${{ github.workspace }}
         run: |
-            brew install automake texinfo libtool
-            brew list
+            # brew install automake texinfo libtool
+            # brew list
             # brew uninstall --ignore-dependencies zstd
             ./build_release_macos.sh -dx -a universal -t 10.15
             for arch in arm64 x86_64; do

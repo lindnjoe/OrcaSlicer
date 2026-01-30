@@ -96,6 +96,7 @@ protected:
         std::string tray_color;          // Raw color (#RRGGBB, 0xRRGGBB, or RRGGBBAA)
         std::string tray_info_idx;       // Setting ID (optional)
         std::string spoolman_id;         // Spoolman ID (optional)
+        std::string filament_name;       // Spoolman filament name (optional)
         int         bed_temp = 0;        // Optional
         int         nozzle_temp = 0;     // Optional
     };

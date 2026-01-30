@@ -2495,6 +2495,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto ams_id     = ams.opt_string("ams_id", 0u);
         auto slot_id    = ams.opt_string("slot_id", 0u);
         auto filament_type = ams.opt_string("filament_type", 0u);
+        auto filament_name = ams.opt_string("filament_name", 0u);
         auto spoolman_id = ams.opt_string("filament_spoolman_id", 0u);
         int nozzle_temp = parse_optional_int(ams.opt_string("tray_nozzle_temp", 0u));
         int bed_temp = parse_optional_int(ams.opt_string("tray_bed_temp", 0u));
@@ -2506,8 +2507,9 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             } else {
                 const Preset *base_preset = find_base_filament_preset(filaments, filament_id, filament_type);
                 if (base_preset) {
-                    std::string filament_name = filament_type.empty() ? "Spoolman " + spoolman_id :
-                                                                        filament_type + " Spoolman " + spoolman_id;
+                    std::string preset_name = !filament_name.empty() ? filament_name :
+                                              (filament_type.empty() ? "Spoolman " + spoolman_id :
+                                                                       filament_type + " Spoolman " + spoolman_id);
                     std::string new_filament_id = create_spoolman_filament_id(filaments, spoolman_id);
                     DynamicPrintConfig dynamic_config;
                     dynamic_config.set_key_value("filament_vendor", new ConfigOptionStrings{"Spoolman"});
@@ -2515,7 +2517,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                         dynamic_config.set_key_value("filament_type", new ConfigOptionStrings{filament_type});
                     }
                     std::vector<std::string> failures;
-                    bool cloned = filaments.clone_presets_for_filament(base_preset, failures, filament_name, new_filament_id, dynamic_config,
+                    bool cloned = filaments.clone_presets_for_filament(base_preset, failures, preset_name, new_filament_id, dynamic_config,
                                                                        printers.get_selected_preset().name);
                     if (cloned) {
                         update_spoolman_preset(filaments, new_filament_id, spoolman_id, nozzle_temp, bed_temp);

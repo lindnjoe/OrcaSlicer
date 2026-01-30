@@ -3228,6 +3228,7 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
         tray_config.set_key_value("filament_colour_type", new ConfigOptionStrings{std::to_string(tray.ctype)});
         tray_config.set_key_value("filament_exist", new ConfigOptionBools{tray.is_exists});
         tray_config.set_key_value("filament_spoolman_id", new ConfigOptionStrings{tray.spoolman_id});
+        tray_config.set_key_value("filament_name", new ConfigOptionStrings{tray.spoolman_filament_name});
         tray_config.set_key_value("tray_bed_temp", new ConfigOptionStrings{tray.bed_temp});
         tray_config.set_key_value("tray_nozzle_temp", new ConfigOptionStrings{tray.nozzle_temp_max});
         std::optional<FilamentBaseInfo> info;

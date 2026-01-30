@@ -54,6 +54,7 @@ void DevAmsTray::reset()
     bed_temp            = "";
     nozzle_temp_max     = "";
     nozzle_temp_min     = "";
+    spoolman_id         = "";
     xcam_info           = "";
     uuid                = "";
     k                   = 0.0f;
@@ -579,6 +580,10 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                                 curr_tray->nozzle_temp_min = (*tray_it)["nozzle_temp_min"].get<std::string>();
                             else
                                 curr_tray->nozzle_temp_min = "";
+                            if (tray_it->contains("spoolman_id"))
+                                curr_tray->spoolman_id = (*tray_it)["spoolman_id"].get<std::string>();
+                            else
+                                curr_tray->spoolman_id = "";
                             if (tray_it->contains("xcam_info"))
                                 curr_tray->xcam_info = (*tray_it)["xcam_info"].get<std::string>();
                             else

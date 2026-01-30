@@ -668,6 +668,18 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             return it->get<std::string>();
         return "";
     };
+    auto safe_string_or_number = [](const nlohmann::json& obj, const char* key) -> std::string {
+        auto it = obj.find(key);
+        if (it == obj.end())
+            return "";
+        if (it->is_string())
+            return it->get<std::string>();
+        if (it->is_number_integer())
+            return std::to_string(it->get<long long>());
+        if (it->is_number_unsigned())
+            return std::to_string(it->get<unsigned long long>());
+        return "";
+    };
     auto safe_int = [](const nlohmann::json& obj, const char* key) -> int {
         auto it = obj.find(key);
         if (it != obj.end() && it->is_number())
@@ -699,9 +711,9 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         tray.slot_index = lane_index;
         tray.tray_color = safe_string(lane_obj, "color");
         tray.tray_type = safe_string(lane_obj, "material");
-        tray.spoolman_id = safe_string(lane_obj, "spoolman_id");
+        tray.spoolman_id = safe_string_or_number(lane_obj, "spoolman_id");
         if (tray.spoolman_id.empty()) {
-            tray.spoolman_id = safe_string(lane_obj, "spool_id");
+            tray.spoolman_id = safe_string_or_number(lane_obj, "spool_id");
         }
         tray.bed_temp = safe_int(lane_obj, "bed_temp");
         tray.nozzle_temp = safe_int(lane_obj, "nozzle_temp");

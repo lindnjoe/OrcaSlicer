@@ -2538,9 +2538,15 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             } else {
                 const Preset *base_preset = find_base_filament_preset(filaments, filament_id, filament_type);
                 if (base_preset) {
-                    std::string preset_name = !filament_name.empty() ? filament_name :
-                                              (filament_type.empty() ? "Spoolman " + spoolman_id :
-                                                                       filament_type + " Spoolman " + spoolman_id);
+                    std::string preset_name = filament_name;
+                    boost::algorithm::trim(preset_name);
+                    if (preset_name.empty()) {
+                        preset_name = filament_type.empty() ? "Spoolman " + spoolman_id :
+                                                              filament_type + " Spoolman " + spoolman_id;
+                    }
+                    if (!spoolman_id.empty() && preset_name.find(spoolman_id) == std::string::npos) {
+                        preset_name += " #" + spoolman_id;
+                    }
                     std::string new_filament_id = create_spoolman_filament_id(filaments, spoolman_id);
                     DynamicPrintConfig dynamic_config;
                     dynamic_config.set_key_value("filament_vendor", new ConfigOptionStrings{"Spoolman"});

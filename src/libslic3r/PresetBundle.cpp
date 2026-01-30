@@ -2440,6 +2440,8 @@ static void apply_spoolman_settings_to_preset(Preset &preset, const std::string 
     auto spool_opt = preset.config.option<ConfigOptionStrings>("filament_spoolman_id");
     if (spool_opt) {
         spool_opt->values = {spoolman_id};
+    } else {
+        preset.config.set_key_value("filament_spoolman_id", new ConfigOptionStrings{spoolman_id});
     }
     if (nozzle_temp > 0) {
         if (auto nozzle_opt = preset.config.option<ConfigOptionInts>("nozzle_temperature")) {
@@ -2514,6 +2516,12 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         int bed_temp = parse_optional_int(ams.opt_string("tray_bed_temp", 0u));
         if (!spoolman_id.empty()) {
             auto matched_id = find_filament_id_by_spoolman_id(filaments, spoolman_id);
+            if (!matched_id) {
+                matched_id = find_filament_id_by_name(filaments, filament_name);
+                if (matched_id) {
+                    update_spoolman_preset(filaments, *matched_id, spoolman_id, nozzle_temp, bed_temp);
+                }
+            }
             if (matched_id) {
                 filament_id = *matched_id;
                 update_spoolman_preset(filaments, filament_id, spoolman_id, nozzle_temp, bed_temp);
@@ -2541,6 +2549,9 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " failed to clone spoolman filament preset for " << spoolman_id;
                     }
                 }
+            }
+            if (!filament_id.empty()) {
+                ams.set_key_value("filament_id", new ConfigOptionString{filament_id});
             }
         }
         ams_infos.push_back({filament_id.empty() ? false : true,false, filament_color});

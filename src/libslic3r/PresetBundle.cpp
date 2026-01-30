@@ -2333,14 +2333,12 @@ void PresetBundle::get_ams_cobox_infos(AMSComboInfo& combox_info)
 static std::string calculate_md5(const std::string &input)
 {
     unsigned char digest[MD5_DIGEST_LENGTH];
-    EVP_MD_CTX *mdContext = EVP_MD_CTX_new();
-    EVP_DigestInit(mdContext, EVP_md5());
-    EVP_DigestUpdate(mdContext, input.c_str(), input.length());
-    EVP_DigestFinal(mdContext, digest, nullptr);
-    EVP_MD_CTX_free(mdContext);
+    MD5(reinterpret_cast<const unsigned char *>(input.data()), input.size(), digest);
 
     char hexDigest[MD5_DIGEST_LENGTH * 2 + 1];
-    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i) { sprintf(hexDigest + (i * 2), "%02x", digest[i]); }
+    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i) {
+        sprintf(hexDigest + (i * 2), "%02x", digest[i]);
+    }
     hexDigest[MD5_DIGEST_LENGTH * 2] = '\0';
 
     return std::string(hexDigest);

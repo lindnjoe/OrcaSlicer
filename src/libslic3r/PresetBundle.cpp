@@ -2371,6 +2371,19 @@ static std::optional<std::string> find_filament_id_by_spoolman_id(const PresetCo
     return std::nullopt;
 }
 
+static std::optional<std::string> find_filament_id_by_name(const PresetCollection &filaments, const std::string &filament_name)
+{
+    if (filament_name.empty())
+        return std::nullopt;
+    for (const auto &preset : filaments.get_presets()) {
+        if (!preset.is_user())
+            continue;
+        if (boost::algorithm::starts_with(preset.name, filament_name + " @"))
+            return preset.filament_id;
+    }
+    return std::nullopt;
+}
+
 static std::string create_spoolman_filament_id(const PresetCollection &filaments, const std::string &spoolman_id)
 {
     std::string candidate = "P" + calculate_md5("spoolman:" + spoolman_id).substr(0, 7);
@@ -3506,11 +3519,22 @@ void PresetBundle::load_config_file_config(const std::string &name_or_path, bool
         //3mf support multiple extruder logic
         size_t extruder_count = config.option<ConfigOptionFloats>("nozzle_diameter")->values.size();
         extruder_variant_count = config.option<ConfigOptionStrings>("filament_extruder_variant", true)->size();
-        if ((extruder_variant_count != filament_self_indice.size())
-            || (extruder_variant_count < num_filaments)) {
-            assert(false);
-            BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << boost::format(": invalid config file %1%, can not find suitable filament_extruder_variant or filament_self_index") % name_or_path;
-            throw Slic3r::RuntimeError(std::string("Invalid configuration file: ") + name_or_path);
+        if (extruder_variant_count < num_filaments) {
+            std::vector<std::string>& filament_extruder_variant = config.option<ConfigOptionStrings>("filament_extruder_variant", true)->values;
+            filament_extruder_variant.resize(num_filaments, "Direct Drive Standard");
+            extruder_variant_count = filament_extruder_variant.size();
+        }
+        if (extruder_variant_count != filament_self_indice.size()) {
+            BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << boost::format(
+                ": fixup filament_self_index for %1% (filament_self_index=%2%, filament_extruder_variant=%3%, num_filaments=%4%)")
+                % name_or_path % filament_self_indice.size() % extruder_variant_count % num_filaments;
+            filament_self_indice.resize(extruder_variant_count);
+            for (size_t index = 0; index < filament_self_indice.size(); index++) {
+                if (num_filaments > 0)
+                    filament_self_indice[index] = static_cast<int>((index % num_filaments) + 1);
+                else
+                    filament_self_indice[index] = static_cast<int>(index + 1);
+            }
         }
         if (num_filaments != extruder_variant_count) {
             process_multi_extruder = true;

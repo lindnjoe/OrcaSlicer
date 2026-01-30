@@ -2504,6 +2504,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             if (matched_id) {
                 filament_id = *matched_id;
                 update_spoolman_preset(filaments, filament_id, spoolman_id, nozzle_temp, bed_temp);
+                filament_changed = true;
             } else {
                 const Preset *base_preset = find_base_filament_preset(filaments, filament_id, filament_type);
                 if (base_preset) {
@@ -2522,6 +2523,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     if (cloned) {
                         update_spoolman_preset(filaments, new_filament_id, spoolman_id, nozzle_temp, bed_temp);
                         filament_id = new_filament_id;
+                        filament_changed = true;
                     } else {
                         BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " failed to clone spoolman filament preset for " << spoolman_id;
                     }

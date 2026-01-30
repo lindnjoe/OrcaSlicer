@@ -2378,7 +2378,8 @@ static std::optional<std::string> find_filament_id_by_name(const PresetCollectio
     for (const auto &preset : filaments.get_presets()) {
         if (!preset.is_user())
             continue;
-        if (boost::algorithm::starts_with(preset.name, filament_name + " @"))
+        if (preset.name == filament_name || preset.alias == filament_name ||
+            boost::algorithm::starts_with(preset.name, filament_name + " @"))
             return preset.filament_id;
     }
     return std::nullopt;
@@ -2514,6 +2515,14 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto spoolman_id = ams.opt_string("filament_spoolman_id", 0u);
         int nozzle_temp = parse_optional_int(ams.opt_string("tray_nozzle_temp", 0u));
         int bed_temp = parse_optional_int(ams.opt_string("tray_bed_temp", 0u));
+        if (spoolman_id.empty() && !filament_name.empty()) {
+            auto matched_id = find_filament_id_by_name(filaments, filament_name);
+            if (matched_id) {
+                filament_id = *matched_id;
+                filament_changed = true;
+                ams.set_key_value("filament_id", new ConfigOptionString{filament_id});
+            }
+        }
         if (!spoolman_id.empty()) {
             auto matched_id = find_filament_id_by_spoolman_id(filaments, spoolman_id);
             if (!matched_id) {

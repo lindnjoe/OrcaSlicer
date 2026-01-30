@@ -730,8 +730,13 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             const auto& filament_json = (*spool_json)["filament"];
             if (filament_json.contains("name") && filament_json["name"].is_string())
                 return filament_json["name"].get<std::string>();
-            if (filament_json.contains("material") && filament_json["material"].is_string())
-                return filament_json["material"].get<std::string>();
+            if (filament_json.contains("material")) {
+                const auto& material_json = filament_json["material"];
+                if (material_json.is_string())
+                    return material_json.get<std::string>();
+                if (material_json.is_object() && material_json.contains("name") && material_json["name"].is_string())
+                    return material_json["name"].get<std::string>();
+            }
         }
 
         if (spool_json->contains("name") && (*spool_json)["name"].is_string())

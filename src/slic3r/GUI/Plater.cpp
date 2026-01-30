@@ -3443,8 +3443,12 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     for (int i = 0; i < list.size(); ++i, ++iter) {
         auto & ams = iter->second;
         auto filament_id = ams.opt_string("filament_id", 0u);
-        ams.set_key_value("filament_changed", new ConfigOptionBool{dlg_res == wxID_YES || list2[i] != filament_id});
-        list2[i] = filament_id;
+        auto spoolman_id = ams.opt_string("filament_spoolman_id", 0u);
+        auto filament_name = ams.opt_string("filament_name", 0u);
+        std::string compare_id = !spoolman_id.empty() ? spoolman_id :
+                                 (!filament_name.empty() ? filament_name : filament_id);
+        ams.set_key_value("filament_changed", new ConfigOptionBool{dlg_res == wxID_YES || list2[i] != compare_id});
+        list2[i] = compare_id;
     }
 
     // BBS:Record consumables information before synchronization

@@ -774,6 +774,18 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             tray.spoolman_id = safe_string_or_number(lane_obj, "spool_id");
         }
         tray.filament_name = fetch_spoolman_filament_name(tray.spoolman_id);
+        if (tray.filament_name.empty()) {
+            tray.filament_name = safe_string(lane_obj, "name");
+        }
+        if (tray.filament_name.empty()) {
+            tray.filament_name = safe_string(lane_obj, "spool_name");
+        }
+        if (tray.filament_name.empty()) {
+            tray.filament_name = safe_string(lane_obj, "filament_name");
+        }
+        if (tray.filament_name.empty()) {
+            tray.filament_name = safe_string(lane_obj, "material");
+        }
         tray.bed_temp = safe_int(lane_obj, "bed_temp");
         tray.nozzle_temp = safe_int(lane_obj, "nozzle_temp");
         tray.has_filament = !tray.tray_type.empty();

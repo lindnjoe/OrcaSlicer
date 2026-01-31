@@ -43,6 +43,9 @@ public:
     std::string              bed_temp;
     std::string              nozzle_temp_max;
     std::string              nozzle_temp_min;
+    std::string              spoolman_id;
+    std::string              spoolman_filament_name;
+    std::string              spoolman_vendor_name;
     std::string              xcam_info;
     std::string              uuid;
     int                      ctype    = 0;

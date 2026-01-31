@@ -3227,6 +3227,10 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
         tray_config.set_key_value("filament_multi_colour", new ConfigOptionStrings{});
         tray_config.set_key_value("filament_colour_type", new ConfigOptionStrings{std::to_string(tray.ctype)});
         tray_config.set_key_value("filament_exist", new ConfigOptionBools{tray.is_exists});
+        tray_config.set_key_value("filament_spoolman_id", new ConfigOptionStrings{tray.spoolman_id});
+        tray_config.set_key_value("filament_name", new ConfigOptionStrings{tray.spoolman_filament_name});
+        tray_config.set_key_value("tray_bed_temp", new ConfigOptionStrings{tray.bed_temp});
+        tray_config.set_key_value("tray_nozzle_temp", new ConfigOptionStrings{tray.nozzle_temp_max});
         std::optional<FilamentBaseInfo> info;
         if (wxGetApp().preset_bundle) {
             info = wxGetApp().preset_bundle->get_filament_by_filament_id(tray.setting_id);
@@ -3439,8 +3443,12 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     for (int i = 0; i < list.size(); ++i, ++iter) {
         auto & ams = iter->second;
         auto filament_id = ams.opt_string("filament_id", 0u);
-        ams.set_key_value("filament_changed", new ConfigOptionBool{dlg_res == wxID_YES || list2[i] != filament_id});
-        list2[i] = filament_id;
+        auto spoolman_id = ams.opt_string("filament_spoolman_id", 0u);
+        auto filament_name = ams.opt_string("filament_name", 0u);
+        std::string compare_id = !spoolman_id.empty() ? spoolman_id :
+                                 (!filament_name.empty() ? filament_name : filament_id);
+        ams.set_key_value("filament_changed", new ConfigOptionBool{dlg_res == wxID_YES || list2[i] != compare_id});
+        list2[i] = compare_id;
     }
 
     // BBS:Record consumables information before synchronization

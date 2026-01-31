@@ -2711,6 +2711,13 @@ void PrintConfigDef::init_fff_params()
     def->set_default_value(new ConfigOptionStrings{L("(Undefined)")});
     def->cli = ConfigOptionDef::nocli;
 
+    def = this->add("filament_spoolman_id", coStrings);
+    def->label = L("Spoolman ID");
+    def->tooltip = L("Spoolman identifier for this filament preset.");
+    def->mode = comDevelop;
+    def->set_default_value(new ConfigOptionStrings{""});
+    def->cli = ConfigOptionDef::nocli;
+
     def = this->add("infill_direction", coFloat);
     def->label = L("Sparse infill direction");
     def->category = L("Strength");

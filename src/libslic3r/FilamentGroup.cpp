@@ -581,7 +581,7 @@ namespace Slic3r
             if (FGMode::MatchMode == ctx.group_info.mode)
                 return calc_filament_group_for_match(cost);
         }
-        catch (const FilamentGroupException& e) {
+        catch (const FilamentGroupException&) {
         }
 
         auto merged_map = try_merge_filaments();
@@ -895,5 +895,4 @@ namespace Slic3r
     }
 
 }
-
 

@@ -794,12 +794,12 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         proxy_path = "/server/spoolman/proxy?path=/api/v1/filament/" + spool_id;
         proxy_url  = join_url(device_info.base_url, proxy_path);
         proxy_body.clear();
-        proxy_ok   = false;
-        proxy_http = Http::get(proxy_url);
+        proxy_ok                 = false;
+        auto proxy_filament_http = Http::get(proxy_url);
         if (!device_info.api_key.empty()) {
-            proxy_http.header("X-Api-Key", device_info.api_key);
+            proxy_filament_http.header("X-Api-Key", device_info.api_key);
         }
-        proxy_http.timeout_connect(5)
+        proxy_filament_http.timeout_connect(5)
             .timeout_max(10)
             .on_complete([&](std::string body, unsigned status) {
                 if (status == 200) {

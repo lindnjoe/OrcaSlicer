@@ -689,11 +689,32 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             return it->get<int>();
         return 0;
     };
-    auto fetch_spoolman_filament_name = [&](const std::string& spool_id) -> std::string {
-        if (spool_id.empty())
-            return "";
+    struct SpoolmanFilamentData {
+        std::string name;
+        int nozzle_temp{0};
+        int bed_temp{0};
+        std::string color_hex;
+    };
 
-        std::string proxy_path = "/server/spoolman/proxy?path=/v1/spool/" + spool_id;
+    auto read_spoolman_filament_data = [&](const nlohmann::json& filament_json) -> SpoolmanFilamentData {
+        SpoolmanFilamentData data;
+        if (filament_json.contains("name") && filament_json["name"].is_string())
+            data.name = filament_json["name"].get<std::string>();
+        if (filament_json.contains("settings_extruder_temp") && filament_json["settings_extruder_temp"].is_number())
+            data.nozzle_temp = filament_json["settings_extruder_temp"].get<int>();
+        if (filament_json.contains("settings_bed_temp") && filament_json["settings_bed_temp"].is_number())
+            data.bed_temp = filament_json["settings_bed_temp"].get<int>();
+        if (filament_json.contains("color_hex") && filament_json["color_hex"].is_string())
+            data.color_hex = filament_json["color_hex"].get<std::string>();
+        return data;
+    };
+
+    auto fetch_spoolman_filament_data = [&](const std::string& spool_id) -> SpoolmanFilamentData {
+        SpoolmanFilamentData data;
+        if (spool_id.empty())
+            return data;
+
+        std::string proxy_path = "/server/spoolman/proxy?path=/api/v1/filament/" + spool_id;
         std::string proxy_url = join_url(device_info.base_url, proxy_path);
 
         std::string proxy_body;
@@ -712,41 +733,55 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             })
             .perform_sync();
 
-        if (!proxy_ok)
-            return "";
-
-        auto proxy_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
-        if (proxy_json.is_discarded())
-            return "";
-
-        const nlohmann::json* spool_json = &proxy_json;
-        if (proxy_json.contains("result")) {
-            spool_json = &proxy_json["result"];
-        }
-        if (!spool_json->is_object())
-            return "";
-
-        if (spool_json->contains("filament") && (*spool_json)["filament"].is_object()) {
-            const auto& filament_json = (*spool_json)["filament"];
-            if (filament_json.contains("name") && filament_json["name"].is_string())
-                return filament_json["name"].get<std::string>();
-            if (filament_json.contains("external_id") && filament_json["external_id"].is_string())
-                return filament_json["external_id"].get<std::string>();
-            if (filament_json.contains("material")) {
-                const auto& material_json = filament_json["material"];
-                if (material_json.is_string())
-                    return material_json.get<std::string>();
-                if (material_json.is_object() && material_json.contains("name") && material_json["name"].is_string())
-                    return material_json["name"].get<std::string>();
+        if (proxy_ok) {
+            auto proxy_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
+            if (!proxy_json.is_discarded()) {
+                const nlohmann::json* filament_json = &proxy_json;
+                if (proxy_json.contains("result")) {
+                    filament_json = &proxy_json["result"];
+                }
+                if (filament_json->is_object()) {
+                    data = read_spoolman_filament_data(*filament_json);
+                    if (!data.name.empty())
+                        return data;
+                }
             }
         }
 
-        if (spool_json->contains("name") && (*spool_json)["name"].is_string())
-            return (*spool_json)["name"].get<std::string>();
-        if (spool_json->contains("external_id") && (*spool_json)["external_id"].is_string())
-            return (*spool_json)["external_id"].get<std::string>();
+        proxy_path = "/server/spoolman/proxy?path=/api/v1/filament";
+        proxy_url = join_url(device_info.base_url, proxy_path);
+        proxy_body.clear();
+        proxy_ok = false;
+        proxy_http = Http::get(proxy_url);
+        if (!device_info.api_key.empty()) {
+            proxy_http.header("X-Api-Key", device_info.api_key);
+        }
+        proxy_http.timeout_connect(5)
+            .timeout_max(10)
+            .on_complete([&](std::string body, unsigned status) {
+                if (status == 200) {
+                    proxy_body = std::move(body);
+                    proxy_ok   = true;
+                }
+            })
+            .perform_sync();
+        if (proxy_ok) {
+            auto proxy_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
+            if (!proxy_json.is_discarded() && proxy_json.is_array()) {
+                for (const auto& entry : proxy_json) {
+                    if (!entry.is_object())
+                        continue;
+                    auto entry_id = safe_string_or_number(entry, "id");
+                    if (entry_id == spool_id) {
+                        data = read_spoolman_filament_data(entry);
+                        if (!data.name.empty())
+                            return data;
+                    }
+                }
+            }
+        }
 
-        return "";
+        return data;
     };
 
     for (const auto& [lane_key, lane_obj] : value.items()) {
@@ -777,7 +812,8 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         if (tray.spoolman_id.empty()) {
             tray.spoolman_id = safe_string_or_number(lane_obj, "spool_id");
         }
-        tray.filament_name = fetch_spoolman_filament_name(tray.spoolman_id);
+        auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
+        tray.filament_name = filament_data.name;
         if (tray.filament_name.empty()) {
             tray.filament_name = safe_string(lane_obj, "name");
         }
@@ -790,8 +826,23 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         if (tray.filament_name.empty()) {
             tray.filament_name = safe_string(lane_obj, "material");
         }
-        tray.bed_temp = safe_int(lane_obj, "bed_temp");
-        tray.nozzle_temp = safe_int(lane_obj, "nozzle_temp");
+        if (tray.nozzle_temp == 0 && filament_data.nozzle_temp > 0) {
+            tray.nozzle_temp = filament_data.nozzle_temp;
+        }
+        if (tray.bed_temp == 0 && filament_data.bed_temp > 0) {
+            tray.bed_temp = filament_data.bed_temp;
+        }
+        if (tray.tray_color.empty() && !filament_data.color_hex.empty()) {
+            tray.tray_color = filament_data.color_hex;
+        }
+        int lane_bed_temp = safe_int(lane_obj, "bed_temp");
+        int lane_nozzle_temp = safe_int(lane_obj, "nozzle_temp");
+        if (lane_bed_temp > 0) {
+            tray.bed_temp = lane_bed_temp;
+        }
+        if (lane_nozzle_temp > 0) {
+            tray.nozzle_temp = lane_nozzle_temp;
+        }
         tray.has_filament = !tray.tray_type.empty();
         tray.tray_info_idx = map_filament_type_to_generic_id(tray.tray_type);
 

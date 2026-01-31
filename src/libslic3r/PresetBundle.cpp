@@ -2479,6 +2479,42 @@ static void update_spoolman_preset(PresetCollection &filaments, const std::strin
     }
 }
 
+static void update_spoolman_metadata(PresetCollection &filaments, const std::string &filament_id, const std::string &spoolman_id,
+                                     const std::string &filament_name, const std::string &filament_type, const std::string &vendor_name,
+                                     int nozzle_temp, int bed_temp)
+{
+    if (filament_id.empty() || spoolman_id.empty())
+        return;
+    for (const auto &preset : filaments.get_presets()) {
+        if (!preset.is_user())
+            continue;
+        if (preset.filament_id != filament_id)
+            continue;
+        if (auto *mutable_preset = filaments.find_preset(preset.name, false, true)) {
+            apply_spoolman_settings_to_preset(*mutable_preset, spoolman_id, nozzle_temp, bed_temp);
+            if (!filament_type.empty()) {
+                if (auto type_opt = mutable_preset->config.option<ConfigOptionStrings>("filament_type")) {
+                    type_opt->values = {filament_type};
+                }
+            }
+            if (!vendor_name.empty()) {
+                if (auto vendor_opt = mutable_preset->config.option<ConfigOptionStrings>("filament_vendor")) {
+                    vendor_opt->values = {vendor_name};
+                }
+            }
+            if (!filament_name.empty()) {
+                std::string name = filament_name;
+                boost::algorithm::trim(name);
+                if (!name.empty() && mutable_preset->name != name) {
+                    mutable_preset->name = name;
+                }
+            }
+            mutable_preset->save(nullptr);
+        }
+        break;
+    }
+}
+
 unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfig *,std::string>> &unknowns, bool use_map, std::map<int, AMSMapInfo> &maps,bool enable_append, MergeFilamentInfo &merge_info)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "use_map:" << use_map << " enable_append:" << enable_append;
@@ -2511,6 +2547,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto slot_id    = ams.opt_string("slot_id", 0u);
         auto filament_type = ams.opt_string("filament_type", 0u);
         auto filament_name = ams.opt_string("filament_name", 0u);
+        auto spoolman_vendor = ams.opt_string("spoolman_vendor_name", 0u);
         auto spoolman_id = ams.opt_string("filament_spoolman_id", 0u);
         int nozzle_temp = parse_optional_int(ams.opt_string("tray_nozzle_temp", 0u));
         int bed_temp = parse_optional_int(ams.opt_string("tray_bed_temp", 0u));
@@ -2518,6 +2555,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             auto matched_id = find_filament_id_by_name(filaments, filament_name);
             if (matched_id) {
                 filament_id = *matched_id;
+                update_spoolman_metadata(filaments, filament_id, spoolman_id, filament_name, filament_type, spoolman_vendor, nozzle_temp, bed_temp);
                 filament_changed = true;
                 ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
             }
@@ -2527,12 +2565,12 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             if (!matched_id) {
                 matched_id = find_filament_id_by_name(filaments, filament_name);
                 if (matched_id) {
-                    update_spoolman_preset(filaments, *matched_id, spoolman_id, nozzle_temp, bed_temp);
+                    update_spoolman_metadata(filaments, *matched_id, spoolman_id, filament_name, filament_type, spoolman_vendor, nozzle_temp, bed_temp);
                 }
             }
             if (matched_id) {
                 filament_id = *matched_id;
-                update_spoolman_preset(filaments, filament_id, spoolman_id, nozzle_temp, bed_temp);
+                update_spoolman_metadata(filaments, filament_id, spoolman_id, filament_name, filament_type, spoolman_vendor, nozzle_temp, bed_temp);
                 filament_changed = true;
             } else {
                 const Preset *base_preset = find_base_filament_preset(filaments, filament_id, filament_type);
@@ -2552,11 +2590,15 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     if (!filament_type.empty()) {
                         dynamic_config.set_key_value("filament_type", new ConfigOptionStrings{filament_type});
                     }
+                    if (!spoolman_vendor.empty()) {
+                        dynamic_config.set_key_value("filament_vendor", new ConfigOptionStrings{spoolman_vendor});
+                    }
                     std::vector<std::string> failures;
                     bool cloned = filaments.clone_presets_for_filament(base_preset, failures, preset_name, new_filament_id, dynamic_config,
                                                                        printers.get_selected_preset().name);
                     if (cloned) {
-                        update_spoolman_preset(filaments, new_filament_id, spoolman_id, nozzle_temp, bed_temp);
+                        update_spoolman_metadata(filaments, new_filament_id, spoolman_id, filament_name, filament_type, spoolman_vendor,
+                                                 nozzle_temp, bed_temp);
                         filament_id = new_filament_id;
                         filament_changed = true;
                     } else {

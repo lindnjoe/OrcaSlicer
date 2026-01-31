@@ -557,6 +557,9 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
                     tray_json["nozzle_temp_max"] = std::to_string(tray->nozzle_temp);
                     tray_json["nozzle_temp_min"] = std::to_string(tray->nozzle_temp);
                 }
+                if (!tray->vendor_name.empty()) {
+                    tray_json["spoolman_vendor_name"] = tray->vendor_name;
+                }
             } else {
                 tray_json["tray_info_idx"] = "";
                 tray_json["tray_type"] = "";
@@ -694,6 +697,8 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         int nozzle_temp{0};
         int bed_temp{0};
         std::string color_hex;
+        std::string vendor_name;
+        std::string material;
     };
 
     auto read_spoolman_filament_data = [&](const nlohmann::json& filament_json) -> SpoolmanFilamentData {
@@ -706,6 +711,13 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             data.bed_temp = filament_json["settings_bed_temp"].get<int>();
         if (filament_json.contains("color_hex") && filament_json["color_hex"].is_string())
             data.color_hex = filament_json["color_hex"].get<std::string>();
+        if (filament_json.contains("vendor") && filament_json["vendor"].is_object()) {
+            const auto& vendor_json = filament_json["vendor"];
+            if (vendor_json.contains("name") && vendor_json["name"].is_string())
+                data.vendor_name = vendor_json["name"].get<std::string>();
+        }
+        if (filament_json.contains("material") && filament_json["material"].is_string())
+            data.material = filament_json["material"].get<std::string>();
         return data;
     };
 
@@ -814,6 +826,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         }
         auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
         tray.filament_name = filament_data.name;
+        tray.vendor_name = filament_data.vendor_name;
         if (tray.filament_name.empty()) {
             tray.filament_name = safe_string(lane_obj, "name");
         }
@@ -825,6 +838,12 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         }
         if (tray.filament_name.empty()) {
             tray.filament_name = safe_string(lane_obj, "material");
+        }
+        if (tray.tray_type.empty() && !filament_data.material.empty()) {
+            tray.tray_type = filament_data.material;
+        }
+        if (tray.tray_type.empty()) {
+            tray.tray_type = safe_string(lane_obj, "material");
         }
         if (tray.nozzle_temp == 0 && filament_data.nozzle_temp > 0) {
             tray.nozzle_temp = filament_data.nozzle_temp;

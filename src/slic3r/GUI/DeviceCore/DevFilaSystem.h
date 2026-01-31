@@ -43,6 +43,9 @@ public:
     std::string              bed_temp;
     std::string              nozzle_temp_max;
     std::string              nozzle_temp_min;
+    std::string              spoolman_id;
+    std::string              spoolman_filament_name;
+    std::string              spoolman_vendor_name;
     std::string              xcam_info;
     std::string              uuid;
     int                      ctype    = 0;
@@ -53,6 +56,7 @@ public:
     wxColour        wx_color;
     bool            is_bbl;
     bool            is_exists = false;
+    bool            is_slot_placeholder = false;  // Orca: True for empty tray slots from pull-mode agents
     int             hold_count = 0;
     int             remain = 0;         // filament remain: 0 ~ 100
 

@@ -1263,6 +1263,7 @@ PRINT_CONFIG_CLASS_DEFINE(
     ((ConfigOptionStrings,             filament_ids))
     ((ConfigOptionStrings,             filament_colour))
     ((ConfigOptionStrings,             filament_vendor))
+    ((ConfigOptionStrings,             filament_spoolman_id))
     ((ConfigOptionBools,               filament_is_support))
     ((ConfigOptionInts,                filament_printable))
     ((ConfigOptionFloats,              filament_change_length))

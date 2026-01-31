@@ -700,6 +700,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
     {
         std::string name;
         std::string spool_name;
+        std::string spool_id;
         int         nozzle_temp{0};
         int         bed_temp{0};
         std::string color_hex;
@@ -709,6 +710,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
 
     auto read_spoolman_spool_data = [&](const nlohmann::json& spool_json) -> SpoolmanFilamentData {
         SpoolmanFilamentData data;
+        data.spool_id = safe_string_or_number(spool_json, "id");
         if (spool_json.contains("name") && spool_json["name"].is_string())
             data.spool_name = spool_json["name"].get<std::string>();
         if (spool_json.contains("filament") && spool_json["filament"].is_object()) {
@@ -888,7 +890,22 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         if (tray.spoolman_id.empty()) {
             tray.spoolman_id = safe_string_or_number(lane_obj, "spool_id");
         }
+        if (tray.spoolman_id.empty() && lane_obj.contains("spool")) {
+            const auto& spool_value = lane_obj["spool"];
+            if (spool_value.is_object()) {
+                tray.spoolman_id = safe_string_or_number(spool_value, "id");
+                if (tray.spoolman_id.empty())
+                    tray.spoolman_id = safe_string_or_number(spool_value, "spool_id");
+            } else if (spool_value.is_string() || spool_value.is_number_integer() || spool_value.is_number()) {
+                tray.spoolman_id = spool_value.dump();
+                if (spool_value.is_string())
+                    tray.spoolman_id = spool_value.get<std::string>();
+            }
+        }
         auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
+        if (tray.spoolman_id.empty() && !filament_data.spool_id.empty()) {
+            tray.spoolman_id = filament_data.spool_id;
+        }
         tray.filament_name = filament_data.spool_name;
         if (tray.filament_name.empty()) {
             tray.filament_name = filament_data.name;

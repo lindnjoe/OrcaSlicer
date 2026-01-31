@@ -23,6 +23,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/locale.hpp>
 #include <boost/log/trivial.hpp>
+#include <openssl/md5.h>
 #include <miniz/miniz.h>
 
 // Mark string for localization and translate.

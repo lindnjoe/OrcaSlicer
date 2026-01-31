@@ -56,6 +56,7 @@ void DevAmsTray::reset()
     nozzle_temp_min     = "";
     spoolman_id         = "";
     spoolman_filament_name = "";
+    spoolman_vendor_name = "";
     xcam_info           = "";
     uuid                = "";
     k                   = 0.0f;

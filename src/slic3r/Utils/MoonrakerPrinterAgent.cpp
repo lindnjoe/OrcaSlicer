@@ -713,6 +713,8 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         data.spool_id = safe_string_or_number(spool_json, "id");
         if (spool_json.contains("name") && spool_json["name"].is_string())
             data.spool_name = spool_json["name"].get<std::string>();
+        if (data.spool_name.empty() && spool_json.contains("comment") && spool_json["comment"].is_string())
+            data.spool_name = spool_json["comment"].get<std::string>();
         if (spool_json.contains("filament") && spool_json["filament"].is_object()) {
             const auto& filament_json = spool_json["filament"];
             if (filament_json.contains("name") && filament_json["name"].is_string())
@@ -907,6 +909,16 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             tray.spoolman_id = filament_data.spool_id;
         }
         tray.filament_name = filament_data.spool_name;
+        if (tray.filament_name.empty()) {
+            std::string display_name;
+            if (!filament_data.vendor_name.empty())
+                display_name += filament_data.vendor_name;
+            if (!filament_data.name.empty())
+                display_name += (display_name.empty() ? "" : " ") + filament_data.name;
+            if (!filament_data.material.empty())
+                display_name += (display_name.empty() ? "" : " ") + filament_data.material;
+            tray.filament_name = display_name;
+        }
         if (tray.filament_name.empty()) {
             tray.filament_name = filament_data.name;
         }

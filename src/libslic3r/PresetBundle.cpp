@@ -10,6 +10,7 @@
 #include "libslic3r_version.h"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <fstream>
 #include <unordered_set>
@@ -2571,6 +2572,42 @@ static void update_spoolman_preset(
     }
 }
 
+static bool create_spoolman_filament_preset(PresetCollection&  filaments,
+                                            const Preset&      base_preset,
+                                            const std::string& preset_name,
+                                            const std::string& filament_id,
+                                            const std::string& filament_type,
+                                            const std::string& spoolman_vendor,
+                                            const std::string& spoolman_id,
+                                            int                nozzle_temp,
+                                            int                bed_temp)
+{
+    Preset new_preset(Preset::TYPE_FILAMENT, preset_name);
+    new_preset.config.apply(base_preset.config);
+
+    std::string inherits;
+    if (const auto base = filaments.get_preset_base(base_preset)) {
+        inherits = base->name;
+    } else {
+        inherits = base_preset.name;
+    }
+    new_preset.config.set("inherits", inherits, true);
+    new_preset.config.set_key_value("filament_settings_id", new ConfigOptionStrings({preset_name}));
+    new_preset.filament_id = filament_id;
+    if (!filament_type.empty()) {
+        new_preset.config.set_key_value("filament_type", new ConfigOptionStrings({filament_type}));
+    }
+    if (!spoolman_vendor.empty()) {
+        new_preset.config.set_key_value("filament_vendor", new ConfigOptionStrings({spoolman_vendor}));
+    } else {
+        new_preset.config.set_key_value("filament_vendor", new ConfigOptionStrings({"Spoolman"}));
+    }
+    apply_spoolman_settings_to_preset(new_preset, spoolman_id, nozzle_temp, bed_temp);
+
+    filaments.save_current_preset(preset_name, false, false, &new_preset);
+    return true;
+}
+
 static void update_spoolman_metadata(PresetCollection&  filaments,
                                      const std::string& filament_id,
                                      const std::string& spoolman_id,
@@ -2657,6 +2694,19 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto  build_spool_name     = [](const std::string& name, const std::string& type, const std::string& spool_id) {
             std::string result = name;
             boost::algorithm::trim(result);
+            if (!result.empty()) {
+                auto check = result;
+                if (!check.empty() && check.front() == '#') {
+                    check.erase(check.begin());
+                    boost::algorithm::trim(check);
+                }
+                bool is_numeric = !check.empty() &&
+                                  std::all_of(check.begin(), check.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+                bool looks_like_id = (!spool_id.empty() && (check == spool_id || result == spool_id)) || is_numeric;
+                if (looks_like_id) {
+                    result.clear();
+                }
+            }
             if (result.empty()) {
                 result = type.empty() ? "Spoolman" : type;
             }
@@ -2689,20 +2739,11 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             } else {
                 const Preset* base_preset = find_base_filament_preset(filaments, filament_id, filament_type);
                 if (base_preset) {
-                    std::string        preset_name     = build_spool_name(filament_name, filament_type, spoolman_id);
-                    std::string        new_filament_id = create_spoolman_filament_id(filaments, spoolman_id);
-                    DynamicPrintConfig dynamic_config;
-                    dynamic_config.set_key_value("filament_vendor", new ConfigOptionStrings{"Spoolman"});
-                    if (!filament_type.empty()) {
-                        dynamic_config.set_key_value("filament_type", new ConfigOptionStrings{filament_type});
-                    }
-                    if (!spoolman_vendor.empty()) {
-                        dynamic_config.set_key_value("filament_vendor", new ConfigOptionStrings{spoolman_vendor});
-                    }
-                    std::vector<std::string> failures;
-                    bool cloned = filaments.clone_presets_for_filament(base_preset, failures, preset_name, new_filament_id, dynamic_config,
-                                                                       printers.get_selected_preset().name);
-                    if (cloned) {
+                    std::string preset_name     = build_spool_name(filament_name, filament_type, spoolman_id);
+                    std::string new_filament_id = create_spoolman_filament_id(filaments, spoolman_id);
+                    bool created = create_spoolman_filament_preset(filaments, *base_preset, preset_name, new_filament_id, filament_type,
+                                                                   spoolman_vendor, spoolman_id, nozzle_temp, bed_temp);
+                    if (created) {
                         update_spoolman_metadata(filaments, new_filament_id, spoolman_id, preset_name, filament_type, spoolman_vendor,
                                                  nozzle_temp, bed_temp);
                         filament_id      = new_filament_id;
@@ -3219,7 +3260,7 @@ Preset* PresetBundle::get_similar_printer_preset(std::string printer_model, std:
     if (printer_presets.empty())
         return nullptr;
     auto prefer_printer = printers.get_selected_preset().alias; //.name ORCA use alias instead "name" for calling system presets. otherwise
-                                                                //nozzle combo will not change printer presets if they custom named
+                                                                // nozzle combo will not change printer presets if they custom named
 
     if (!printer_variant.empty())
         boost::replace_all(prefer_printer, printer_variant_old, printer_variant);

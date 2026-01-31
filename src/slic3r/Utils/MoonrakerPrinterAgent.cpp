@@ -455,7 +455,7 @@ int MoonrakerPrinterAgent::set_queue_on_main_fn(QueueOnMainFn fn)
     return BAMBU_NETWORK_SUCCESS;
 }
 
-void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<AmsTrayData>& trays)
+void MoonrakerPrinterAgent::build_ams_payload(int ams_count, int max_lane_index, const std::vector<AmsTrayData>& trays)
 {
 
     // Look up MachineObject via DeviceManager
@@ -520,7 +520,8 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
         ams_unit["info"] = "0002";  // treat as AMS_LITE 
 
         nlohmann::json tray_array = nlohmann::json::array();
-        for (int slot_id = 0; slot_id < 4; ++slot_id) {
+        int max_slot_in_this_ams = std::min(3, max_lane_index - ams_id * 4);
+        for (int slot_id = 0; slot_id <= max_slot_in_this_ams; ++slot_id) {
             int slot_index = ams_id * 4 + slot_id;
 
             // Find tray with matching slot_index
@@ -564,6 +565,7 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
                 tray_json["tray_info_idx"] = "";
                 tray_json["tray_type"] = "";
                 tray_json["tray_color"] = "00000000";
+                tray_json["tray_slot_placeholder"] = "1";
             }
 
             tray_array.push_back(tray_json);
@@ -589,6 +591,10 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
     // Call the parser to populate DevFilaSystem
     DevFilaSystemParser::ParseV1_0(print_json, obj, obj->GetFilaSystem(), false);
     BOOST_LOG_TRIVIAL(info) << "MoonrakerPrinterAgent::build_ams_payload: Parsed " << trays.size() << " trays";
+
+    // Set printer_type so update_sync_status() can match it against the preset's printer type.
+    // Without this, the comparison fails and all sync badges are cleared.
+    obj->printer_type = device_info.model_id;
 
     // Set push counters so is_info_ready() returns true for pull-mode agents.
     if (obj->m_push_count == 0) {
@@ -878,7 +884,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
     int ams_count = (max_lane_index + 4) / 4;
 
     // Build and parse the AMS payload
-    build_ams_payload(ams_count, trays);
+    build_ams_payload(ams_count, max_lane_index, trays);
     return true;
 }
 

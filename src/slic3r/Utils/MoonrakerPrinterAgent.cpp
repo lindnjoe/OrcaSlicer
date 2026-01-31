@@ -908,17 +908,37 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         if (tray.spoolman_id.empty() && !filament_data.spool_id.empty()) {
             tray.spoolman_id = filament_data.spool_id;
         }
-        tray.filament_name = filament_data.spool_name;
-        if (tray.filament_name.empty()) {
-            std::string display_name;
-            if (!filament_data.vendor_name.empty())
-                display_name += filament_data.vendor_name;
-            if (!filament_data.name.empty())
-                display_name += (display_name.empty() ? "" : " ") + filament_data.name;
-            if (!filament_data.material.empty())
-                display_name += (display_name.empty() ? "" : " ") + filament_data.material;
-            tray.filament_name = display_name;
-        }
+        auto build_display_name = [](const SpoolmanFilamentData& data) {
+            auto looks_like_numeric = [](std::string value) {
+                boost::algorithm::trim(value);
+                if (value.empty())
+                    return false;
+                if (value.front() == '#') {
+                    value.erase(value.begin());
+                    boost::algorithm::trim(value);
+                }
+                return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            };
+            std::string base_name = data.spool_name;
+            if (!data.spool_id.empty() && (base_name == data.spool_id || looks_like_numeric(base_name))) {
+                base_name.clear();
+            }
+            if (base_name.empty()) {
+                if (!data.vendor_name.empty())
+                    base_name += data.vendor_name;
+                if (!data.name.empty())
+                    base_name += (base_name.empty() ? "" : " ") + data.name;
+                if (!data.material.empty())
+                    base_name += (base_name.empty() ? "" : " ") + data.material;
+            }
+            if (base_name.empty())
+                base_name = data.material;
+            if (!data.spool_id.empty() && !base_name.empty() && base_name.find(data.spool_id) == std::string::npos) {
+                base_name += " #" + data.spool_id;
+            }
+            return base_name;
+        };
+        tray.filament_name = build_display_name(filament_data);
         if (tray.filament_name.empty()) {
             tray.filament_name = filament_data.name;
         }

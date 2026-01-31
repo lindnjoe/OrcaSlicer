@@ -97,6 +97,7 @@ protected:
         std::string tray_info_idx;       // Setting ID (optional)
         std::string spoolman_id;         // Spoolman ID (optional)
         std::string filament_name;       // Spoolman filament name (optional)
+        std::string vendor_name;         // Spoolman vendor name (optional)
         int         bed_temp = 0;        // Optional
         int         nozzle_temp = 0;     // Optional
     };

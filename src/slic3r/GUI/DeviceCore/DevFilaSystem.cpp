@@ -589,6 +589,10 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                                 curr_tray->spoolman_filament_name = (*tray_it)["spoolman_filament_name"].get<std::string>();
                             else
                                 curr_tray->spoolman_filament_name = "";
+                            if (tray_it->contains("spoolman_vendor_name"))
+                                curr_tray->spoolman_vendor_name = (*tray_it)["spoolman_vendor_name"].get<std::string>();
+                            else
+                                curr_tray->spoolman_vendor_name = "";
                             if (tray_it->contains("xcam_info"))
                                 curr_tray->xcam_info = (*tray_it)["xcam_info"].get<std::string>();
                             else

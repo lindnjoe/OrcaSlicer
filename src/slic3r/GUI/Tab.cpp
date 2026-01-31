@@ -2101,7 +2101,7 @@ void Tab::on_presets_changed()
 
     // Check if printer agent needs switching
     if (m_type == Preset::TYPE_PRINTER) {
-        update_printer_agent_if_needed();
+        wxGetApp().switch_printer_agent();
     }
 
     bool is_bbl_vendor_preset = m_preset_bundle->is_bbl_vendor();
@@ -2132,28 +2132,6 @@ void Tab::on_presets_changed()
     m_dependent_tabs.clear();
 
     wxGetApp().plater()->update_project_dirty_from_presets();
-}
-
-void Tab::update_printer_agent_if_needed()
-{
-    std::string agent_id = "orca";
-    if (m_preset_bundle) {
-        if (wxGetApp().preset_bundle->is_bbl_vendor()) {
-            agent_id = "bbl";
-        } else if (wxGetApp().preset_bundle->is_qidi_vendor()) {
-            agent_id = "qidi";
-        }
-    }
-
-    const DynamicPrintConfig& config = m_preset_bundle->printers.get_edited_preset().config;
-    if (config.has("printer_agent")) {
-        std::string value = config.option<ConfigOptionString>("printer_agent")->value;
-        if (!value.empty()) {
-            agent_id = value;
-        }
-    }
-    // Switch agent in GUI_App
-    wxGetApp().switch_printer_agent(agent_id);
 }
 
 void Tab::build_preset_description_line(ConfigOptionsGroup* optgroup)

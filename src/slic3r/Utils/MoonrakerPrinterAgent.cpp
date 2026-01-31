@@ -455,9 +455,8 @@ int MoonrakerPrinterAgent::set_queue_on_main_fn(QueueOnMainFn fn)
     return BAMBU_NETWORK_SUCCESS;
 }
 
-void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<AmsTrayData>& trays)
+void MoonrakerPrinterAgent::build_ams_payload(int ams_count, int max_lane_index, const std::vector<AmsTrayData>& trays)
 {
-
     // Look up MachineObject via DeviceManager
     auto* dev_manager = GUI::wxGetApp().getDeviceManager();
     if (!dev_manager) {
@@ -467,7 +466,6 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
     if (!obj) {
         return;
     }
-
 
     // Color normalization helper (handles #RRGGBB, 0xRRGGBB -> RRGGBBAA)
     auto normalize_color = [](const std::string& color) -> std::string {
@@ -505,22 +503,23 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
     };
 
     // Build BBL-format JSON for DevFilaSystemParser::ParseV1_0
-    nlohmann::json ams_json = nlohmann::json::object();
+    nlohmann::json ams_json  = nlohmann::json::object();
     nlohmann::json ams_array = nlohmann::json::array();
 
     // Calculate ams_exist_bits and tray_exist_bits
-    unsigned long ams_exist_bits = 0;
+    unsigned long ams_exist_bits  = 0;
     unsigned long tray_exist_bits = 0;
 
     for (int ams_id = 0; ams_id < ams_count; ++ams_id) {
         ams_exist_bits |= (1 << ams_id);
 
         nlohmann::json ams_unit = nlohmann::json::object();
-        ams_unit["id"] = std::to_string(ams_id);
-        ams_unit["info"] = "0002";  // treat as AMS_LITE 
+        ams_unit["id"]          = std::to_string(ams_id);
+        ams_unit["info"]        = "0002"; // treat as AMS_LITE
 
-        nlohmann::json tray_array = nlohmann::json::array();
-        for (int slot_id = 0; slot_id < 4; ++slot_id) {
+        nlohmann::json tray_array           = nlohmann::json::array();
+        int            max_slot_in_this_ams = std::min(3, max_lane_index - ams_id * 4);
+        for (int slot_id = 0; slot_id <= max_slot_in_this_ams; ++slot_id) {
             int slot_index = ams_id * 4 + slot_id;
 
             // Find tray with matching slot_index
@@ -533,15 +532,21 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
             }
 
             nlohmann::json tray_json = nlohmann::json::object();
-            tray_json["id"] = std::to_string(slot_id);
-            tray_json["tag_uid"] = "0000000000000000";
+            tray_json["id"]          = std::to_string(slot_id);
+            tray_json["tag_uid"]     = "0000000000000000";
 
             if (tray && tray->has_filament) {
                 tray_exist_bits |= (1 << slot_index);
 
                 tray_json["tray_info_idx"] = tray->tray_info_idx;
-                tray_json["tray_type"] = tray->tray_type;
-                tray_json["tray_color"] = normalize_color(tray->tray_color);
+                tray_json["tray_type"]     = tray->tray_type;
+                tray_json["tray_color"]    = normalize_color(tray->tray_color);
+                if (!tray->spoolman_id.empty()) {
+                    tray_json["spoolman_id"] = tray->spoolman_id;
+                }
+                if (!tray->filament_name.empty()) {
+                    tray_json["spoolman_filament_name"] = tray->filament_name;
+                }
 
                 // Add temperature data if provided
                 if (tray->bed_temp > 0) {
@@ -549,11 +554,16 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
                 }
                 if (tray->nozzle_temp > 0) {
                     tray_json["nozzle_temp_max"] = std::to_string(tray->nozzle_temp);
+                    tray_json["nozzle_temp_min"] = std::to_string(tray->nozzle_temp);
+                }
+                if (!tray->vendor_name.empty()) {
+                    tray_json["spoolman_vendor_name"] = tray->vendor_name;
                 }
             } else {
-                tray_json["tray_info_idx"] = "";
-                tray_json["tray_type"] = "";
-                tray_json["tray_color"] = "00000000";
+                tray_json["tray_info_idx"]         = "";
+                tray_json["tray_type"]             = "";
+                tray_json["tray_color"]            = "00000000";
+                tray_json["tray_slot_placeholder"] = "1";
             }
 
             tray_array.push_back(tray_json);
@@ -568,17 +578,21 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
     std::ostringstream tray_exist_ss;
     tray_exist_ss << std::hex << std::uppercase << tray_exist_bits;
 
-    ams_json["ams"] = ams_array;
-    ams_json["ams_exist_bits"] = ams_exist_ss.str();
+    ams_json["ams"]             = ams_array;
+    ams_json["ams_exist_bits"]  = ams_exist_ss.str();
     ams_json["tray_exist_bits"] = tray_exist_ss.str();
 
     // Wrap in the expected structure for ParseV1_0
     nlohmann::json print_json = nlohmann::json::object();
-    print_json["ams"] = ams_json;
+    print_json["ams"]         = ams_json;
 
     // Call the parser to populate DevFilaSystem
     DevFilaSystemParser::ParseV1_0(print_json, obj, obj->GetFilaSystem(), false);
     BOOST_LOG_TRIVIAL(info) << "MoonrakerPrinterAgent::build_ams_payload: Parsed " << trays.size() << " trays";
+
+    // Set printer_type so update_sync_status() can match it against the preset's printer type.
+    // Without this, the comparison fails and all sync badges are cleared.
+    obj->printer_type = device_info.model_id;
 
     // Set push counters so is_info_ready() returns true for pull-mode agents.
     if (obj->m_push_count == 0) {
@@ -597,8 +611,8 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, const std::vector<A
     // Moonraker printers don't have BBL-style version info, but we need a non-empty map.
     if (obj->module_vers.empty()) {
         DevFirmwareVersionInfo ota_info;
-        ota_info.name = "ota";
-        ota_info.sw_ver = "1.0.0";  // Placeholder version for Moonraker printers
+        ota_info.name   = "ota";
+        ota_info.sw_ver = "1.0.0"; // Placeholder version for Moonraker printers
         obj->module_vers.emplace("ota", ota_info);
     }
 }
@@ -609,7 +623,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
     std::string url = join_url(device_info.base_url, "/server/database/item?namespace=lane_data");
 
     std::string response_body;
-    bool success = false;
+    bool        success = false;
     std::string http_error;
 
     auto http = Http::get(url);
@@ -621,7 +635,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         .on_complete([&](std::string body, unsigned status) {
             if (status == 200) {
                 response_body = body;
-                success = true;
+                success       = true;
             } else {
                 http_error = "HTTP error: " + std::to_string(status);
             }
@@ -652,9 +666,9 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
     }
 
     // Parse response into AmsTrayData
-    const auto& value = json["result"]["value"];
+    const auto&              value = json["result"]["value"];
     std::vector<AmsTrayData> trays;
-    int max_lane_index = 0;
+    int                      max_lane_index = 0;
 
     // Null-safe JSON accessors: nlohmann::json::value() throws type_error
     // when the key exists but the value is null (type mismatch).
@@ -664,11 +678,190 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             return it->get<std::string>();
         return "";
     };
+    auto safe_string_or_number = [](const nlohmann::json& obj, const char* key) -> std::string {
+        auto it = obj.find(key);
+        if (it == obj.end())
+            return "";
+        if (it->is_string())
+            return it->get<std::string>();
+        if (it->is_number_integer())
+            return std::to_string(it->get<long long>());
+        if (it->is_number_unsigned())
+            return std::to_string(it->get<unsigned long long>());
+        return "";
+    };
     auto safe_int = [](const nlohmann::json& obj, const char* key) -> int {
         auto it = obj.find(key);
         if (it != obj.end() && it->is_number())
             return it->get<int>();
         return 0;
+    };
+    struct SpoolmanFilamentData
+    {
+        std::string name;
+        std::string spool_name;
+        std::string spool_id;
+        int         nozzle_temp{0};
+        int         bed_temp{0};
+        std::string color_hex;
+        std::string vendor_name;
+        std::string material;
+    };
+
+    auto read_spoolman_spool_data = [&](const nlohmann::json& spool_json) -> SpoolmanFilamentData {
+        SpoolmanFilamentData data;
+        data.spool_id = safe_string_or_number(spool_json, "id");
+        if (spool_json.contains("name") && spool_json["name"].is_string())
+            data.spool_name = spool_json["name"].get<std::string>();
+        if (data.spool_name.empty() && spool_json.contains("comment") && spool_json["comment"].is_string())
+            data.spool_name = spool_json["comment"].get<std::string>();
+        if (spool_json.contains("filament") && spool_json["filament"].is_object()) {
+            const auto& filament_json = spool_json["filament"];
+            if (filament_json.contains("name") && filament_json["name"].is_string())
+                data.name = filament_json["name"].get<std::string>();
+            if (filament_json.contains("settings_extruder_temp") && filament_json["settings_extruder_temp"].is_number())
+                data.nozzle_temp = filament_json["settings_extruder_temp"].get<int>();
+            if (filament_json.contains("settings_bed_temp") && filament_json["settings_bed_temp"].is_number())
+                data.bed_temp = filament_json["settings_bed_temp"].get<int>();
+            if (filament_json.contains("color_hex") && filament_json["color_hex"].is_string())
+                data.color_hex = filament_json["color_hex"].get<std::string>();
+            if (filament_json.contains("vendor") && filament_json["vendor"].is_object()) {
+                const auto& vendor_json = filament_json["vendor"];
+                if (vendor_json.contains("name") && vendor_json["name"].is_string())
+                    data.vendor_name = vendor_json["name"].get<std::string>();
+            }
+            if (filament_json.contains("material") && filament_json["material"].is_string())
+                data.material = filament_json["material"].get<std::string>();
+        }
+        return data;
+    };
+
+    auto read_spoolman_filament_data = [&](const nlohmann::json& filament_json) -> SpoolmanFilamentData {
+        SpoolmanFilamentData data;
+        if (filament_json.contains("name") && filament_json["name"].is_string())
+            data.name = filament_json["name"].get<std::string>();
+        if (filament_json.contains("settings_extruder_temp") && filament_json["settings_extruder_temp"].is_number())
+            data.nozzle_temp = filament_json["settings_extruder_temp"].get<int>();
+        if (filament_json.contains("settings_bed_temp") && filament_json["settings_bed_temp"].is_number())
+            data.bed_temp = filament_json["settings_bed_temp"].get<int>();
+        if (filament_json.contains("color_hex") && filament_json["color_hex"].is_string())
+            data.color_hex = filament_json["color_hex"].get<std::string>();
+        if (filament_json.contains("vendor") && filament_json["vendor"].is_object()) {
+            const auto& vendor_json = filament_json["vendor"];
+            if (vendor_json.contains("name") && vendor_json["name"].is_string())
+                data.vendor_name = vendor_json["name"].get<std::string>();
+        }
+        if (filament_json.contains("material") && filament_json["material"].is_string())
+            data.material = filament_json["material"].get<std::string>();
+        return data;
+    };
+
+    auto fetch_spoolman_filament_data = [&](const std::string& spool_id) -> SpoolmanFilamentData {
+        SpoolmanFilamentData data;
+        if (spool_id.empty())
+            return data;
+
+        std::string proxy_path = "/server/spoolman/proxy?path=/api/v1/spool/" + spool_id;
+        std::string proxy_url  = join_url(device_info.base_url, proxy_path);
+
+        std::string proxy_body;
+        bool        proxy_ok   = false;
+        auto        proxy_http = Http::get(proxy_url);
+        if (!device_info.api_key.empty()) {
+            proxy_http.header("X-Api-Key", device_info.api_key);
+        }
+        proxy_http.timeout_connect(5)
+            .timeout_max(10)
+            .on_complete([&](std::string body, unsigned status) {
+                if (status == 200) {
+                    proxy_body = std::move(body);
+                    proxy_ok   = true;
+                }
+            })
+            .perform_sync();
+
+        if (proxy_ok) {
+            auto proxy_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
+            if (!proxy_json.is_discarded()) {
+                const nlohmann::json* spool_json = &proxy_json;
+                if (proxy_json.contains("result")) {
+                    spool_json = &proxy_json["result"];
+                }
+                if (spool_json->is_object()) {
+                    data = read_spoolman_spool_data(*spool_json);
+                    if (!data.spool_name.empty() || !data.name.empty())
+                        return data;
+                }
+            }
+        }
+
+        proxy_path = "/server/spoolman/proxy?path=/api/v1/filament/" + spool_id;
+        proxy_url  = join_url(device_info.base_url, proxy_path);
+        proxy_body.clear();
+        proxy_ok                 = false;
+        auto proxy_filament_http = Http::get(proxy_url);
+        if (!device_info.api_key.empty()) {
+            proxy_filament_http.header("X-Api-Key", device_info.api_key);
+        }
+        proxy_filament_http.timeout_connect(5)
+            .timeout_max(10)
+            .on_complete([&](std::string body, unsigned status) {
+                if (status == 200) {
+                    proxy_body = std::move(body);
+                    proxy_ok   = true;
+                }
+            })
+            .perform_sync();
+
+        if (proxy_ok) {
+            auto proxy_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
+            if (!proxy_json.is_discarded()) {
+                const nlohmann::json* filament_json = &proxy_json;
+                if (proxy_json.contains("result")) {
+                    filament_json = &proxy_json["result"];
+                }
+                if (filament_json->is_object()) {
+                    data = read_spoolman_filament_data(*filament_json);
+                    if (!data.name.empty())
+                        return data;
+                }
+            }
+        }
+
+        proxy_path = "/server/spoolman/proxy?path=/api/v1/filament";
+        proxy_url  = join_url(device_info.base_url, proxy_path);
+        proxy_body.clear();
+        proxy_ok             = false;
+        auto proxy_list_http = Http::get(proxy_url);
+        if (!device_info.api_key.empty()) {
+            proxy_list_http.header("X-Api-Key", device_info.api_key);
+        }
+        proxy_list_http.timeout_connect(5)
+            .timeout_max(10)
+            .on_complete([&](std::string body, unsigned status) {
+                if (status == 200) {
+                    proxy_body = std::move(body);
+                    proxy_ok   = true;
+                }
+            })
+            .perform_sync();
+        if (proxy_ok) {
+            auto proxy_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
+            if (!proxy_json.is_discarded() && proxy_json.is_array()) {
+                for (const auto& entry : proxy_json) {
+                    if (!entry.is_object())
+                        continue;
+                    auto entry_id = safe_string_or_number(entry, "id");
+                    if (entry_id == spool_id) {
+                        data = read_spoolman_filament_data(entry);
+                        if (!data.name.empty())
+                            return data;
+                    }
+                }
+            }
+        }
+
+        return data;
     };
 
     for (const auto& [lane_key, lane_obj] : value.items()) {
@@ -677,8 +870,8 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         }
 
         // Extract lane index from the "lane" field (tool number, 0-based)
-        std::string lane_str = safe_string(lane_obj, "lane");
-        int lane_index = -1;
+        std::string lane_str   = safe_string(lane_obj, "lane");
+        int         lane_index = -1;
         if (!lane_str.empty()) {
             try {
                 lane_index = std::stoi(lane_str);
@@ -692,12 +885,100 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         }
 
         AmsTrayData tray;
-        tray.slot_index = lane_index;
-        tray.tray_color = safe_string(lane_obj, "color");
-        tray.tray_type = safe_string(lane_obj, "material");
-        tray.bed_temp = safe_int(lane_obj, "bed_temp");
-        tray.nozzle_temp = safe_int(lane_obj, "nozzle_temp");
-        tray.has_filament = !tray.tray_type.empty();
+        tray.slot_index  = lane_index;
+        tray.tray_color  = safe_string(lane_obj, "color");
+        tray.tray_type   = safe_string(lane_obj, "material");
+        tray.spoolman_id = safe_string_or_number(lane_obj, "spoolman_id");
+        if (tray.spoolman_id.empty()) {
+            tray.spoolman_id = safe_string_or_number(lane_obj, "spool_id");
+        }
+        if (tray.spoolman_id.empty() && lane_obj.contains("spool")) {
+            const auto& spool_value = lane_obj["spool"];
+            if (spool_value.is_object()) {
+                tray.spoolman_id = safe_string_or_number(spool_value, "id");
+                if (tray.spoolman_id.empty())
+                    tray.spoolman_id = safe_string_or_number(spool_value, "spool_id");
+            } else if (spool_value.is_string() || spool_value.is_number_integer() || spool_value.is_number()) {
+                tray.spoolman_id = spool_value.dump();
+                if (spool_value.is_string())
+                    tray.spoolman_id = spool_value.get<std::string>();
+            }
+        }
+        auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
+        if (tray.spoolman_id.empty() && !filament_data.spool_id.empty()) {
+            tray.spoolman_id = filament_data.spool_id;
+        }
+        auto build_display_name = [](const SpoolmanFilamentData& data) {
+            auto looks_like_numeric = [](std::string value) {
+                boost::algorithm::trim(value);
+                if (value.empty())
+                    return false;
+                if (value.front() == '#') {
+                    value.erase(value.begin());
+                    boost::algorithm::trim(value);
+                }
+                return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            };
+            std::string base_name = data.spool_name;
+            if (!data.spool_id.empty() && (base_name == data.spool_id || looks_like_numeric(base_name))) {
+                base_name.clear();
+            }
+            if (base_name.empty()) {
+                if (!data.vendor_name.empty())
+                    base_name += data.vendor_name;
+                if (!data.name.empty())
+                    base_name += (base_name.empty() ? "" : " ") + data.name;
+                if (!data.material.empty())
+                    base_name += (base_name.empty() ? "" : " ") + data.material;
+            }
+            if (base_name.empty())
+                base_name = data.material;
+            if (!data.spool_id.empty() && !base_name.empty() && base_name.find(data.spool_id) == std::string::npos) {
+                base_name += " #" + data.spool_id;
+            }
+            return base_name;
+        };
+        tray.filament_name = build_display_name(filament_data);
+        if (tray.filament_name.empty()) {
+            tray.filament_name = filament_data.name;
+        }
+        tray.vendor_name = filament_data.vendor_name;
+        if (tray.filament_name.empty()) {
+            tray.filament_name = safe_string(lane_obj, "name");
+        }
+        if (tray.filament_name.empty()) {
+            tray.filament_name = safe_string(lane_obj, "spool_name");
+        }
+        if (tray.filament_name.empty()) {
+            tray.filament_name = safe_string(lane_obj, "filament_name");
+        }
+        if (tray.filament_name.empty()) {
+            tray.filament_name = safe_string(lane_obj, "material");
+        }
+        if (tray.tray_type.empty() && !filament_data.material.empty()) {
+            tray.tray_type = filament_data.material;
+        }
+        if (tray.tray_type.empty()) {
+            tray.tray_type = safe_string(lane_obj, "material");
+        }
+        if (tray.nozzle_temp == 0 && filament_data.nozzle_temp > 0) {
+            tray.nozzle_temp = filament_data.nozzle_temp;
+        }
+        if (tray.bed_temp == 0 && filament_data.bed_temp > 0) {
+            tray.bed_temp = filament_data.bed_temp;
+        }
+        if (tray.tray_color.empty() && !filament_data.color_hex.empty()) {
+            tray.tray_color = filament_data.color_hex;
+        }
+        int lane_bed_temp    = safe_int(lane_obj, "bed_temp");
+        int lane_nozzle_temp = safe_int(lane_obj, "nozzle_temp");
+        if (lane_bed_temp > 0) {
+            tray.bed_temp = lane_bed_temp;
+        }
+        if (lane_nozzle_temp > 0) {
+            tray.nozzle_temp = lane_nozzle_temp;
+        }
+        tray.has_filament  = !tray.tray_type.empty();
         tray.tray_info_idx = map_filament_type_to_generic_id(tray.tray_type);
 
         max_lane_index = std::max(max_lane_index, lane_index);
@@ -713,7 +994,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
     int ams_count = (max_lane_index + 4) / 4;
 
     // Build and parse the AMS payload
-    build_ams_payload(ams_count, trays);
+    build_ams_payload(ams_count, max_lane_index, trays);
     return true;
 }
 
@@ -721,54 +1002,76 @@ std::string MoonrakerPrinterAgent::map_filament_type_to_generic_id(const std::st
 {
     std::string upper = filament_type;
     boost::trim(upper);
-    std::transform(upper.begin(), upper.end(), upper.begin(),
-        [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
 
     // Map to OrcaFilamentLibrary preset IDs (compatible with all printers)
     // Source: resources/profiles/OrcaFilamentLibrary/filament/
 
     // PLA variants
-    if (upper == "PLA")           return "OGFL99";
-    if (upper == "PLA-CF")        return "OGFL98";
-    if (upper == "PLA SILK" || upper == "PLA-SILK") return "OGFL96";
-    if (upper == "PLA HIGH SPEED" || upper == "PLA-HS" || upper == "PLA HS") return "OGFL95";
+    if (upper == "PLA")
+        return "OGFL99";
+    if (upper == "PLA-CF")
+        return "OGFL98";
+    if (upper == "PLA SILK" || upper == "PLA-SILK")
+        return "OGFL96";
+    if (upper == "PLA HIGH SPEED" || upper == "PLA-HS" || upper == "PLA HS")
+        return "OGFL95";
 
     // ABS/ASA variants
-    if (upper == "ABS")           return "OGFB99";
-    if (upper == "ASA")           return "OGFB98";
+    if (upper == "ABS")
+        return "OGFB99";
+    if (upper == "ASA")
+        return "OGFB98";
 
     // PETG/PET variants
-    if (upper == "PETG" || upper == "PET") return "OGFG99";
-    if (upper == "PCTG")          return "OGFG97";
+    if (upper == "PETG" || upper == "PET")
+        return "OGFG99";
+    if (upper == "PCTG")
+        return "OGFG97";
 
     // PA/Nylon variants
-    if (upper == "PA" || upper == "NYLON") return "OGFN99";
-    if (upper == "PA-CF")         return "OGFN98";
-    if (upper == "PPA" || upper == "PPA-CF") return "OGFN97";
-    if (upper == "PPA-GF")        return "OGFN96";
+    if (upper == "PA" || upper == "NYLON")
+        return "OGFN99";
+    if (upper == "PA-CF")
+        return "OGFN98";
+    if (upper == "PPA" || upper == "PPA-CF")
+        return "OGFN97";
+    if (upper == "PPA-GF")
+        return "OGFN96";
 
     // PC variants
-    if (upper == "PC")            return "OGFC99";
+    if (upper == "PC")
+        return "OGFC99";
 
     // PP/PE variants
-    if (upper == "PE")            return "OGFP99";
-    if (upper == "PP")            return "OGFP97";
+    if (upper == "PE")
+        return "OGFP99";
+    if (upper == "PP")
+        return "OGFP97";
 
     // Support materials
-    if (upper == "PVA")           return "OGFS99";
-    if (upper == "HIPS")          return "OGFS98";
-    if (upper == "BVOH")          return "OGFS97";
+    if (upper == "PVA")
+        return "OGFS99";
+    if (upper == "HIPS")
+        return "OGFS98";
+    if (upper == "BVOH")
+        return "OGFS97";
 
     // TPU variants
-    if (upper == "TPU")           return "OGFU99";
+    if (upper == "TPU")
+        return "OGFU99";
 
     // Other materials
-    if (upper == "EVA")           return "OGFR99";
-    if (upper == "PHA")           return "OGFR98";
-    if (upper == "COPE")          return "OGFLC99";
-    if (upper == "SBS")           return "OFLSBS99";
+    if (upper == "EVA")
+        return "OGFR99";
+    if (upper == "PHA")
+        return "OGFR98";
+    if (upper == "COPE")
+        return "OGFLC99";
+    if (upper == "SBS")
+        return "OFLSBS99";
 
-    // Unknown material 
+    // Unknown material
     return "__unknown__";
 }
 

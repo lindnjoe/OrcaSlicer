@@ -54,6 +54,9 @@ void DevAmsTray::reset()
     bed_temp            = "";
     nozzle_temp_max     = "";
     nozzle_temp_min     = "";
+    spoolman_id         = "";
+    spoolman_filament_name = "";
+    spoolman_vendor_name = "";
     xcam_info           = "";
     uuid                = "";
     k                   = 0.0f;
@@ -579,6 +582,18 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                                 curr_tray->nozzle_temp_min = (*tray_it)["nozzle_temp_min"].get<std::string>();
                             else
                                 curr_tray->nozzle_temp_min = "";
+                            if (tray_it->contains("spoolman_id"))
+                                curr_tray->spoolman_id = (*tray_it)["spoolman_id"].get<std::string>();
+                            else
+                                curr_tray->spoolman_id = "";
+                            if (tray_it->contains("spoolman_filament_name"))
+                                curr_tray->spoolman_filament_name = (*tray_it)["spoolman_filament_name"].get<std::string>();
+                            else
+                                curr_tray->spoolman_filament_name = "";
+                            if (tray_it->contains("spoolman_vendor_name"))
+                                curr_tray->spoolman_vendor_name = (*tray_it)["spoolman_vendor_name"].get<std::string>();
+                            else
+                                curr_tray->spoolman_vendor_name = "";
                             if (tray_it->contains("xcam_info"))
                                 curr_tray->xcam_info = (*tray_it)["xcam_info"].get<std::string>();
                             else
@@ -611,6 +626,9 @@ void DevFilaSystemParser::ParseV1_0(const json& jj, MachineObject* obj, DevFilaS
                             else
                             {
                                 curr_tray->remain = -1;
+                            }
+                            if (tray_it->contains("tray_slot_placeholder")) {
+                                curr_tray->is_slot_placeholder = true;
                             }
                             int ams_id_int = 0;
                             int tray_id_int = 0;

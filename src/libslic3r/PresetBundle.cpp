@@ -2575,6 +2575,7 @@ static void update_spoolman_preset(
 static bool create_spoolman_filament_preset(PresetCollection&  filaments,
                                             const Preset&      base_preset,
                                             const std::string& preset_name,
+                                            const std::string& printer_preset_name,
                                             const std::string& filament_id,
                                             const std::string& filament_type,
                                             const std::string& spoolman_vendor,
@@ -2586,7 +2587,9 @@ static bool create_spoolman_filament_preset(PresetCollection&  filaments,
     if (auto idx = base_preset.name.rfind(" @"); idx != std::string::npos && base_preset.name.substr(idx) != " @System") {
         resolved_name += base_preset.name.substr(idx);
     } else {
-        resolved_name += " @" + wxGetApp().preset_bundle->printers.get_selected_preset_name();
+        if (!printer_preset_name.empty()) {
+            resolved_name += " @" + printer_preset_name;
+        }
     }
     Preset new_preset(Preset::TYPE_FILAMENT, resolved_name);
     new_preset.config.apply(base_preset.config);
@@ -2747,8 +2750,9 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 if (base_preset) {
                     std::string preset_name     = build_spool_name(filament_name, filament_type, spoolman_id);
                     std::string new_filament_id = create_spoolman_filament_id(filaments, spoolman_id);
-                    bool created = create_spoolman_filament_preset(filaments, *base_preset, preset_name, new_filament_id, filament_type,
-                                                                   spoolman_vendor, spoolman_id, nozzle_temp, bed_temp);
+                    bool        created         = create_spoolman_filament_preset(filaments, *base_preset, preset_name,
+                                                                                  printers.get_selected_preset_name(), new_filament_id, filament_type,
+                                                                                  spoolman_vendor, spoolman_id, nozzle_temp, bed_temp);
                     if (created) {
                         update_spoolman_metadata(filaments, new_filament_id, spoolman_id, preset_name, filament_type, spoolman_vendor,
                                                  nozzle_temp, bed_temp);

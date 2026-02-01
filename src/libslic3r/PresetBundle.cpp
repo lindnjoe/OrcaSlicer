@@ -2698,13 +2698,13 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto  filament_name        = ams.opt_string("filament_name", 0u);
         auto  spoolman_vendor      = ams.opt_string("spoolman_vendor_name", 0u);
         auto  spoolman_id          = ams.opt_string("filament_spoolman_id", 0u);
-        if (filament_name.empty()) {
+        if (filament_name.empty() && ams.has("spoolman_filament_name")) {
             filament_name = ams.opt_string("spoolman_filament_name", 0u);
         }
-        if (spoolman_vendor.empty()) {
+        if (spoolman_vendor.empty() && ams.has("filament_vendor")) {
             spoolman_vendor = ams.opt_string("filament_vendor", 0u);
         }
-        if (spoolman_id.empty()) {
+        if (spoolman_id.empty() && ams.has("spoolman_id")) {
             spoolman_id = ams.opt_string("spoolman_id", 0u);
         }
         int  nozzle_temp      = parse_optional_int(ams.opt_string("tray_nozzle_temp", 0u));

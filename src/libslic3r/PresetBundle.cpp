@@ -2475,6 +2475,53 @@ static std::optional<std::string> find_filament_id_by_name_any(const PresetColle
     return std::nullopt;
 }
 
+static bool filament_type_matches(const Preset& preset, const std::string& filament_type)
+{
+    if (filament_type.empty())
+        return true;
+    const auto* type_opt = preset.config.option<ConfigOptionStrings>("filament_type");
+    if (!type_opt || type_opt->values.empty())
+        return false;
+    return boost::iequals(type_opt->values.front(), filament_type);
+}
+
+static bool compatible_printers_match(const Preset& preset, const std::vector<std::string>& compatible_printers)
+{
+    if (compatible_printers.empty())
+        return true;
+    const auto* compatible_opt = preset.config.option<ConfigOptionStrings>("compatible_printers");
+    if (!compatible_opt || compatible_opt->values.empty())
+        return true;
+    for (const auto& printer_name : compatible_printers) {
+        if (std::find(compatible_opt->values.begin(), compatible_opt->values.end(), printer_name) != compatible_opt->values.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static std::optional<std::string> find_filament_id_by_name_and_type(const PresetCollection&         filaments,
+                                                                    const std::string&              filament_name,
+                                                                    const std::string&              filament_type,
+                                                                    const std::vector<std::string>& compatible_printers)
+{
+    if (filament_name.empty())
+        return std::nullopt;
+    for (const auto& preset : filaments.get_presets()) {
+        if (!preset.is_user())
+            continue;
+        if (!filament_type_matches(preset, filament_type))
+            continue;
+        if (!compatible_printers_match(preset, compatible_printers))
+            continue;
+        if (preset.name == filament_name || preset.alias == filament_name ||
+            boost::algorithm::starts_with(preset.name, filament_name + " @")) {
+            return preset.filament_id;
+        }
+    }
+    return std::nullopt;
+}
+
 static std::string create_spoolman_filament_id(const PresetCollection& filaments, const std::string& spoolman_id)
 {
     std::string candidate    = "P" + calculate_md5("spoolman:" + spoolman_id).substr(0, 7);
@@ -2780,6 +2827,21 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         };
         auto spool_display_name = spoolman_id.empty() ? filament_name :
                                                         build_spool_name(filament_name, filament_type, spoolman_id, spoolman_vendor);
+        if (!spool_display_name.empty()) {
+            auto matched_id = find_filament_id_by_name_and_type(filaments, spool_display_name, filament_type, compatible_printers);
+            if (!matched_id && spool_display_name != filament_name) {
+                matched_id = find_filament_id_by_name_and_type(filaments, filament_name, filament_type, compatible_printers);
+            }
+            if (matched_id) {
+                filament_id = *matched_id;
+                if (!spoolman_id.empty()) {
+                    update_spoolman_metadata(filaments, filament_id, spoolman_id, spool_display_name, filament_type, spoolman_vendor,
+                                             compatible_printers, nozzle_temp, bed_temp);
+                }
+                filament_changed = true;
+                ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
+            }
+        }
         if (spoolman_id.empty() && !filament_name.empty()) {
             auto matched_id = find_filament_id_by_name(filaments, filament_name);
             if (!matched_id) {
@@ -2793,7 +2855,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
             }
         }
-        if (!spoolman_id.empty()) {
+        if (!spoolman_id.empty() && filament_id.empty()) {
             auto matched_id = find_filament_id_by_spoolman_id(filaments, spoolman_id);
             if (matched_id) {
                 filament_id = *matched_id;
@@ -2819,9 +2881,9 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     }
                 }
             }
-            if (!filament_id.empty()) {
-                ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
-            }
+        }
+        if (!spoolman_id.empty() && !filament_id.empty()) {
+            ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
         }
         ams_infos.push_back({filament_id.empty() ? false : true, false, is_placeholder, filament_color});
         AMSMapInfo temp = {ams_id, slot_id};

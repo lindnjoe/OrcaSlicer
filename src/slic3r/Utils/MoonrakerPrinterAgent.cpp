@@ -782,22 +782,41 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             if (host.empty()) {
                 return std::string{};
             }
-            bool has_port  = false;
-            auto colon_pos = host.rfind(':');
-            if (colon_pos != std::string::npos) {
-                auto port_part = host.substr(colon_pos + 1);
-                has_port       = !port_part.empty() &&
-                           std::all_of(port_part.begin(), port_part.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            auto has_port = [](const std::string& host_value) {
+                auto colon_pos = host_value.rfind(':');
+                if (colon_pos == std::string::npos || host_value.find(']') != std::string::npos) {
+                    return false;
+                }
+                auto port_part = host_value.substr(colon_pos + 1);
+                return !port_part.empty() &&
+                       std::all_of(port_part.begin(), port_part.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            };
+            auto strip_port = [&](const std::string& host_value) {
+                if (!has_port(host_value)) {
+                    return host_value;
+                }
+                return host_value.substr(0, host_value.rfind(':'));
+            };
+            if (!has_override) {
+                host = strip_port(host);
+                return scheme + host + ":" + std::to_string(spoolman_port);
             }
-            if (!has_port) {
+            if (!has_port(host)) {
                 return scheme + host + ":" + std::to_string(spoolman_port);
             }
             return scheme + host;
         };
 
         std::string spoolman_host_override;
+        if (auto* preset_bundle = GUI::wxGetApp().preset_bundle) {
+            if (preset_bundle->physical_printers.has_selection()) {
+                spoolman_host_override = preset_bundle->physical_printers.get_selected_printer().config.opt_string("spoolman_host");
+            }
+        }
         if (auto* app_config = GUI::wxGetApp().app_config) {
-            spoolman_host_override = app_config->get("spoolman_ip", device_info.dev_id);
+            if (spoolman_host_override.empty()) {
+                spoolman_host_override = app_config->get("spoolman_ip", device_info.dev_id);
+            }
         }
         auto spoolman_base_url  = build_spoolman_base_url(device_info.base_url, spoolman_host_override);
         auto fetch_spoolman_url = [&](const std::string& path) {

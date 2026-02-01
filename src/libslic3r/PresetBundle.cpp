@@ -2582,7 +2582,13 @@ static bool create_spoolman_filament_preset(PresetCollection&  filaments,
                                             int                nozzle_temp,
                                             int                bed_temp)
 {
-    Preset new_preset(Preset::TYPE_FILAMENT, preset_name);
+    std::string resolved_name = preset_name;
+    if (auto idx = base_preset.name.rfind(" @"); idx != std::string::npos && base_preset.name.substr(idx) != " @System") {
+        resolved_name += base_preset.name.substr(idx);
+    } else {
+        resolved_name += " @" + wxGetApp().preset_bundle->printers.get_selected_preset_name();
+    }
+    Preset new_preset(Preset::TYPE_FILAMENT, resolved_name);
     new_preset.config.apply(base_preset.config);
 
     std::string inherits;
@@ -2592,7 +2598,7 @@ static bool create_spoolman_filament_preset(PresetCollection&  filaments,
         inherits = base_preset.name;
     }
     new_preset.config.set("inherits", inherits, true);
-    new_preset.config.set_key_value("filament_settings_id", new ConfigOptionStrings({preset_name}));
+    new_preset.config.set_key_value("filament_settings_id", new ConfigOptionStrings({resolved_name}));
     new_preset.filament_id = filament_id;
     if (!filament_type.empty()) {
         new_preset.config.set_key_value("filament_type", new ConfigOptionStrings({filament_type}));
@@ -2604,7 +2610,7 @@ static bool create_spoolman_filament_preset(PresetCollection&  filaments,
     }
     apply_spoolman_settings_to_preset(new_preset, spoolman_id, nozzle_temp, bed_temp);
 
-    filaments.save_current_preset(preset_name, false, false, &new_preset);
+    filaments.save_current_preset(resolved_name, false, false, &new_preset);
     return true;
 }
 

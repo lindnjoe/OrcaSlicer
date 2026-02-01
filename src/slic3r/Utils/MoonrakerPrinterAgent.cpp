@@ -761,6 +761,127 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         if (spool_id.empty())
             return data;
 
+        auto build_spoolman_base_url = [&](const std::string& base_url, const std::string& spoolman_host) {
+            constexpr int spoolman_port = 7912;
+            const bool    has_override  = !spoolman_host.empty();
+            std::string   host_input    = has_override ? spoolman_host : base_url;
+            if (host_input.empty()) {
+                return std::string{};
+            }
+            std::string scheme = "http://";
+            std::string host   = host_input;
+            auto        pos    = host.find("://");
+            if (pos != std::string::npos) {
+                scheme = host.substr(0, pos + 3);
+                host   = host.substr(pos + 3);
+            }
+            auto slash_pos = host.find('/');
+            if (slash_pos != std::string::npos) {
+                host = host.substr(0, slash_pos);
+            }
+            if (host.empty()) {
+                return std::string{};
+            }
+            auto has_port = [](const std::string& host_value) {
+                auto colon_pos = host_value.rfind(':');
+                if (colon_pos == std::string::npos || host_value.find(']') != std::string::npos) {
+                    return false;
+                }
+                auto port_part = host_value.substr(colon_pos + 1);
+                return !port_part.empty() &&
+                       std::all_of(port_part.begin(), port_part.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            };
+            auto strip_port = [&](const std::string& host_value) {
+                if (!has_port(host_value)) {
+                    return host_value;
+                }
+                return host_value.substr(0, host_value.rfind(':'));
+            };
+            if (!has_override) {
+                host = strip_port(host);
+                return scheme + host + ":" + std::to_string(spoolman_port);
+            }
+            if (!has_port(host)) {
+                return scheme + host + ":" + std::to_string(spoolman_port);
+            }
+            return scheme + host;
+        };
+
+        std::string spoolman_host_override;
+        if (auto* preset_bundle = GUI::wxGetApp().preset_bundle) {
+            if (preset_bundle->physical_printers.has_selection()) {
+                spoolman_host_override = preset_bundle->physical_printers.get_selected_printer().config.opt_string("spoolman_host");
+            }
+        }
+        if (auto* app_config = GUI::wxGetApp().app_config) {
+            if (spoolman_host_override.empty()) {
+                spoolman_host_override = app_config->get("spoolman_ip", device_info.dev_id);
+            }
+        }
+        auto spoolman_base_url  = build_spoolman_base_url(device_info.base_url, spoolman_host_override);
+        auto fetch_spoolman_url = [&](const std::string& path) {
+            if (spoolman_base_url.empty()) {
+                return std::string{};
+            }
+            std::string body;
+            bool        ok   = false;
+            auto        http = Http::get(join_url(spoolman_base_url, path));
+            http.timeout_connect(5)
+                .timeout_max(10)
+                .on_complete([&](std::string response, unsigned status) {
+                    if (status == 200) {
+                        body = std::move(response);
+                        ok   = true;
+                    }
+                })
+                .perform_sync();
+            return ok ? body : std::string{};
+        };
+
+        auto read_spoolman_response = [&](const std::string& body, bool expect_spool) {
+            if (body.empty()) {
+                return false;
+            }
+            auto response_json = nlohmann::json::parse(body, nullptr, false, true);
+            if (response_json.is_discarded()) {
+                return false;
+            }
+            const nlohmann::json* payload = &response_json;
+            if (response_json.contains("result")) {
+                payload = &response_json["result"];
+            }
+            if (expect_spool && payload->is_object()) {
+                data = read_spoolman_spool_data(*payload);
+                return !data.spool_name.empty() || !data.name.empty();
+            }
+            if (!expect_spool && payload->is_object()) {
+                data = read_spoolman_filament_data(*payload);
+                return !data.name.empty();
+            }
+            if (!expect_spool && payload->is_array()) {
+                for (const auto& entry : *payload) {
+                    if (!entry.is_object())
+                        continue;
+                    auto entry_id = safe_string_or_number(entry, "id");
+                    if (entry_id == spool_id) {
+                        data = read_spoolman_filament_data(entry);
+                        return !data.name.empty();
+                    }
+                }
+            }
+            return false;
+        };
+
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/spool/" + spool_id), true)) {
+            return data;
+        }
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament/" + spool_id), false)) {
+            return data;
+        }
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament"), false)) {
+            return data;
+        }
+
         std::string proxy_path = "/server/spoolman/proxy?path=/api/v1/spool/" + spool_id;
         std::string proxy_url  = join_url(device_info.base_url, proxy_path);
 

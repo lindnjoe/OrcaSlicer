@@ -1219,8 +1219,8 @@ static std::vector<std::string> s_Preset_filament_options{
     "filament_retract_lift_enforce", "filament_retraction_speed", "filament_deretraction_speed", "filament_retract_restart_extra",
     "filament_retraction_minimum_travel", "filament_retract_when_changing_layer", "filament_wipe", "filament_retract_before_wipe",
     // Profile compatibility
-    "filament_vendor", "compatible_prints", "compatible_prints_condition", "compatible_printers", "compatible_printers_condition",
-    "inherits",
+    "filament_vendor", "filament_spoolman_id", "compatible_prints", "compatible_prints_condition", "compatible_printers",
+    "compatible_printers_condition", "inherits",
     // BBS
     "filament_wipe_distance", "additional_cooling_fan_speed", "nozzle_temperature_range_low", "nozzle_temperature_range_high",
     "filament_extruder_variant",

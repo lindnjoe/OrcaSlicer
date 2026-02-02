@@ -13,6 +13,7 @@
 #include <cctype>
 #include <set>
 #include <fstream>
+#include <unordered_map>
 #include <unordered_set>
 #include <boost/filesystem.hpp>
 #include <boost/algorithm/clamp.hpp>
@@ -2431,18 +2432,29 @@ static int parse_optional_int(const std::string& value)
     }
 }
 
+static std::string normalize_spoolman_id(std::string spoolman_id)
+{
+    boost::algorithm::trim(spoolman_id);
+    return spoolman_id;
+}
+
+static std::string preset_spoolman_id(const Preset& preset)
+{
+    auto spool_opt = preset.config.option<ConfigOptionStrings>("filament_spoolman_id");
+    if (!spool_opt || spool_opt->values.empty())
+        return {};
+    return normalize_spoolman_id(spool_opt->values.front());
+}
+
 static std::optional<std::string> find_filament_id_by_spoolman_id(const PresetCollection& filaments, const std::string& spoolman_id)
 {
     if (spoolman_id.empty())
         return std::nullopt;
-    auto normalized_id = spoolman_id;
-    boost::algorithm::trim(normalized_id);
+    auto normalized_id = normalize_spoolman_id(spoolman_id);
     for (const auto& preset : filaments.get_presets()) {
-        auto spool_opt = preset.config.option<ConfigOptionStrings>("filament_spoolman_id");
-        if (!spool_opt || spool_opt->values.empty())
+        auto stored_id = preset_spoolman_id(preset);
+        if (stored_id.empty())
             continue;
-        auto stored_id = spool_opt->values.front();
-        boost::algorithm::trim(stored_id);
         if (!stored_id.empty() && stored_id == normalized_id)
             return preset.filament_id;
     }
@@ -2505,13 +2517,20 @@ static bool compatible_printers_match(const Preset& preset, const std::vector<st
 static std::optional<std::string> find_filament_id_by_name_and_type(const PresetCollection&         filaments,
                                                                     const std::string&              filament_name,
                                                                     const std::string&              filament_type,
-                                                                    const std::vector<std::string>& compatible_printers)
+                                                                    const std::vector<std::string>& compatible_printers,
+                                                                    const std::string&              spoolman_id)
 {
     if (filament_name.empty())
         return std::nullopt;
+    auto normalized_spoolman_id = normalize_spoolman_id(spoolman_id);
     for (const auto& preset : filaments.get_presets()) {
         if (!preset.is_user())
             continue;
+        if (!normalized_spoolman_id.empty()) {
+            auto existing_spoolman_id = preset_spoolman_id(preset);
+            if (!existing_spoolman_id.empty() && existing_spoolman_id != normalized_spoolman_id)
+                continue;
+        }
         if (!filament_type_matches(preset, filament_type))
             continue;
         if (!compatible_printers_match(preset, compatible_printers))
@@ -2753,10 +2772,11 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                                          MergeFilamentInfo&                                        merge_info)
 {
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "use_map:" << use_map << " enable_append:" << enable_append;
-    std::vector<std::string> ams_filament_presets;
-    std::vector<std::string> ams_filament_colors;
-    std::vector<std::string> ams_filament_color_types;
-    std::vector<AMSMapInfo>  ams_array_maps;
+    std::vector<std::string>                     ams_filament_presets;
+    std::vector<std::string>                     ams_filament_colors;
+    std::vector<std::string>                     ams_filament_color_types;
+    std::vector<AMSMapInfo>                      ams_array_maps;
+    std::unordered_map<std::string, std::string> assigned_spoolman_ids;
     ams_multi_color_filment.clear();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": filament_ams_list size: %1%") % filament_ams_list.size();
     struct AmsInfo
@@ -2864,9 +2884,16 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             }
         }
         if (filament_id.empty() && !spool_display_name.empty()) {
-            auto matched_id = find_filament_id_by_name_and_type(filaments, spool_display_name, filament_type, compatible_printers);
+            auto matched_id = find_filament_id_by_name_and_type(filaments, spool_display_name, filament_type, compatible_printers,
+                                                                spoolman_id);
             if (!matched_id && spool_display_name != filament_name) {
-                matched_id = find_filament_id_by_name_and_type(filaments, filament_name, filament_type, compatible_printers);
+                matched_id = find_filament_id_by_name_and_type(filaments, filament_name, filament_type, compatible_printers, spoolman_id);
+            }
+            if (matched_id && !spoolman_id.empty()) {
+                auto assigned_it = assigned_spoolman_ids.find(*matched_id);
+                if (assigned_it != assigned_spoolman_ids.end() && assigned_it->second != spoolman_id) {
+                    matched_id.reset();
+                }
             }
             if (matched_id) {
                 filament_id = *matched_id;
@@ -2921,6 +2948,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         }
         if (!spoolman_id.empty() && !filament_id.empty()) {
             ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
+            assigned_spoolman_ids[filament_id] = normalize_spoolman_id(spoolman_id);
         }
         ams_infos.push_back({filament_id.empty() ? false : true, false, is_placeholder, filament_color});
         AMSMapInfo temp = {ams_id, slot_id};

@@ -2435,13 +2435,15 @@ static std::optional<std::string> find_filament_id_by_spoolman_id(const PresetCo
 {
     if (spoolman_id.empty())
         return std::nullopt;
+    auto normalized_id = spoolman_id;
+    boost::algorithm::trim(normalized_id);
     for (const auto& preset : filaments.get_presets()) {
-        if (!preset.is_user())
-            continue;
         auto spool_opt = preset.config.option<ConfigOptionStrings>("filament_spoolman_id");
         if (!spool_opt || spool_opt->values.empty())
             continue;
-        if (spool_opt->values.front() == spoolman_id)
+        auto stored_id = spool_opt->values.front();
+        boost::algorithm::trim(stored_id);
+        if (!stored_id.empty() && stored_id == normalized_id)
             return preset.filament_id;
     }
     return std::nullopt;
@@ -3972,16 +3974,19 @@ void PresetBundle::load_config_file_config(
     default: break;
     }
 
-    bool             process_multi_extruder = false;
-    std::vector<int> filament_variant_index;
-    size_t           extruder_variant_count;
-    if (!config.option<ConfigOptionInts>("filament_self_index")) {
-        std::vector<int>& filament_self_indice = config.option<ConfigOptionInts>("filament_self_index", true)->values;
+    bool              process_multi_extruder = false;
+    std::vector<int>  filament_variant_index;
+    size_t            extruder_variant_count;
+    ConfigOptionInts* filament_self_index_opt = config.option<ConfigOptionInts>("filament_self_index", true);
+    std::vector<int>& filament_self_indice    = filament_self_index_opt->values;
+    if (filament_self_indice.size() < num_filaments) {
+        size_t old_size = filament_self_indice.size();
         filament_self_indice.resize(num_filaments);
-        for (int index = 0; index < num_filaments; index++)
-            filament_self_indice[index] = index + 1;
+        for (size_t index = 0; index < num_filaments; index++) {
+            if (index >= old_size || filament_self_indice[index] <= 0)
+                filament_self_indice[index] = static_cast<int>(index + 1);
+        }
     }
-    std::vector<int> filament_self_indice = std::move(config.option<ConfigOptionInts>("filament_self_index")->values);
     // ORCA: Initialize filament_extruder_variant for backward compatibility with old 3mf files
     // that don't have this option saved or have it with default single-element value
     ConfigOptionStrings* filament_extruder_variant_opt = config.option<ConfigOptionStrings>("filament_extruder_variant");

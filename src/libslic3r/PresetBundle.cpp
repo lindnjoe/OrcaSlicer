@@ -3048,6 +3048,12 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             return f.is_compatible && f.filament_id == filament_id && (f.is_user() || filaments.get_preset_base(f) == &f);
         });
         if (iter == filaments.end()) {
+            if (!filament_id.empty()) {
+                iter = std::find_if(filaments.begin(), filaments.end(),
+                                    [&filament_id](auto& f) { return f.filament_id == filament_id && f.is_user(); });
+            }
+        }
+        if (iter == filaments.end()) {
             BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": filament_id %1% not found or system or compatible") % filament_id;
             if (!filament_type.empty()) {
                 filament_type = "Generic " + filament_type;

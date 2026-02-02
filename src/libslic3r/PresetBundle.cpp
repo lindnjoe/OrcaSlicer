@@ -2436,6 +2436,10 @@ static int parse_optional_int(const std::string& value)
 static std::string normalize_spoolman_id(std::string spoolman_id)
 {
     boost::algorithm::trim(spoolman_id);
+    if (!spoolman_id.empty() && spoolman_id.front() == '#') {
+        spoolman_id.erase(spoolman_id.begin());
+        boost::algorithm::trim(spoolman_id);
+    }
     return spoolman_id;
 }
 
@@ -2932,8 +2936,8 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                                          compatible_printers, nozzle_temp, bed_temp);
                 filament_changed = true;
                 ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
-                ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{spoolman_id});
-                ams.set_key_value("spoolman_id", new ConfigOptionStrings{spoolman_id});
+                ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{normalize_spoolman_id(spoolman_id)});
+                ams.set_key_value("spoolman_id", new ConfigOptionStrings{normalize_spoolman_id(spoolman_id)});
             }
         }
         if (filament_id.empty() && !spool_display_name.empty()) {
@@ -2957,8 +2961,8 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 filament_changed = true;
                 ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
                 if (!spoolman_id.empty()) {
-                    ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{spoolman_id});
-                    ams.set_key_value("spoolman_id", new ConfigOptionStrings{spoolman_id});
+                    ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{normalize_spoolman_id(spoolman_id)});
+                    ams.set_key_value("spoolman_id", new ConfigOptionStrings{normalize_spoolman_id(spoolman_id)});
                 }
             }
         }
@@ -2974,8 +2978,8 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 filament_changed = true;
                 ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
                 if (!spoolman_id.empty()) {
-                    ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{spoolman_id});
-                    ams.set_key_value("spoolman_id", new ConfigOptionStrings{spoolman_id});
+                    ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{normalize_spoolman_id(spoolman_id)});
+                    ams.set_key_value("spoolman_id", new ConfigOptionStrings{normalize_spoolman_id(spoolman_id)});
                 }
             }
         }
@@ -2992,8 +2996,8 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                                              compatible_printers, nozzle_temp, bed_temp);
                     filament_id      = new_filament_id;
                     filament_changed = true;
-                    ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{spoolman_id});
-                    ams.set_key_value("spoolman_id", new ConfigOptionStrings{spoolman_id});
+                    ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{normalize_spoolman_id(spoolman_id)});
+                    ams.set_key_value("spoolman_id", new ConfigOptionStrings{normalize_spoolman_id(spoolman_id)});
                 } else {
                     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " failed to clone spoolman filament preset for " << spoolman_id;
                 }

@@ -2676,12 +2676,14 @@ static bool create_spoolman_filament_preset(PresetCollection&               fila
     } else {
         new_preset.config.set_key_value("filament_vendor", new ConfigOptionStrings({"Spoolman"}));
     }
-    if (!compatible_printers.empty()) {
-        if (auto compatible = new_preset.config.option<ConfigOptionStrings>("compatible_printers", true)) {
+    if (auto compatible = new_preset.config.option<ConfigOptionStrings>("compatible_printers", true)) {
+        if (!spoolman_id.empty()) {
+            compatible->values.clear();
+        } else if (!compatible_printers.empty()) {
             compatible->values = compatible_printers;
-        } else {
-            new_preset.config.set_key_value("compatible_printers", new ConfigOptionStrings(compatible_printers));
         }
+    } else if (!compatible_printers.empty() && spoolman_id.empty()) {
+        new_preset.config.set_key_value("compatible_printers", new ConfigOptionStrings(compatible_printers));
     }
     apply_spoolman_settings_to_preset(new_preset, spoolman_id, nozzle_temp, bed_temp);
 
@@ -2725,8 +2727,10 @@ static void update_spoolman_metadata(PresetCollection&               filaments,
                     mutable_preset->name = name;
                 }
             }
-            if (!compatible_printers.empty()) {
-                if (auto compatible = mutable_preset->config.option<ConfigOptionStrings>("compatible_printers", true)) {
+            if (auto compatible = mutable_preset->config.option<ConfigOptionStrings>("compatible_printers", true)) {
+                if (!spoolman_id.empty()) {
+                    compatible->values.clear();
+                } else if (!compatible_printers.empty()) {
                     if (compatible->values.empty()) {
                         compatible->values = compatible_printers;
                     } else {

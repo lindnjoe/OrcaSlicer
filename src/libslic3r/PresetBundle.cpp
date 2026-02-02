@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstring>
 #include <set>
 #include <fstream>
 #include <unordered_map>
@@ -2438,12 +2439,58 @@ static std::string normalize_spoolman_id(std::string spoolman_id)
     return spoolman_id;
 }
 
+static std::string extract_spoolman_id_from_notes(const std::string& notes)
+{
+    static constexpr const char* token = "Spoolman ID:";
+    auto                         pos   = notes.find(token);
+    if (pos == std::string::npos)
+        return {};
+    std::string value = notes.substr(pos + std::strlen(token));
+    boost::algorithm::trim(value);
+    auto line_end = value.find_first_of("\r\n");
+    if (line_end != std::string::npos)
+        value = value.substr(0, line_end);
+    boost::algorithm::trim(value);
+    return value;
+}
+
+static std::string upsert_spoolman_id_in_notes(std::string notes, const std::string& spoolman_id)
+{
+    if (spoolman_id.empty())
+        return notes;
+    std::string existing = extract_spoolman_id_from_notes(notes);
+    if (existing == spoolman_id)
+        return notes;
+    static constexpr const char* token = "Spoolman ID:";
+    auto                         pos   = notes.find(token);
+    if (pos == std::string::npos) {
+        if (!notes.empty() && notes.back() != '\n')
+            notes += "\n";
+        notes += std::string(token) + " " + spoolman_id;
+        return notes;
+    }
+    size_t value_start = pos + std::strlen(token);
+    while (value_start < notes.size() && notes[value_start] == ' ')
+        ++value_start;
+    size_t value_end = notes.find_first_of("\r\n", value_start);
+    notes.replace(value_start, value_end == std::string::npos ? std::string::npos : value_end - value_start, spoolman_id);
+    return notes;
+}
+
 static std::string preset_spoolman_id(const Preset& preset)
 {
     auto spool_opt = preset.config.option<ConfigOptionStrings>("filament_spoolman_id");
     if (!spool_opt || spool_opt->values.empty())
+        spool_opt = nullptr;
+    if (spool_opt && !spool_opt->values.empty()) {
+        auto stored_id = normalize_spoolman_id(spool_opt->values.front());
+        if (!stored_id.empty())
+            return stored_id;
+    }
+    auto notes_opt = preset.config.option<ConfigOptionStrings>("filament_notes");
+    if (!notes_opt || notes_opt->values.empty())
         return {};
-    return normalize_spoolman_id(spool_opt->values.front());
+    return normalize_spoolman_id(extract_spoolman_id_from_notes(notes_opt->values.front()));
 }
 
 static std::optional<std::string> find_filament_id_by_spoolman_id(const PresetCollection& filaments, const std::string& spoolman_id)
@@ -2632,6 +2679,12 @@ static void apply_spoolman_settings_to_preset(Preset& preset, const std::string&
         if (auto bed_first_opt = preset.config.option<ConfigOptionInts>("bed_temperature_initial_layer")) {
             bed_first_opt->values = {bed_temp};
         }
+    }
+    auto notes_opt = preset.config.option<ConfigOptionStrings>("filament_notes");
+    if (notes_opt) {
+        std::string notes = notes_opt->values.empty() ? std::string() : notes_opt->values.front();
+        notes             = upsert_spoolman_id_in_notes(notes, normalize_spoolman_id(spoolman_id));
+        notes_opt->values = {notes};
     }
 }
 

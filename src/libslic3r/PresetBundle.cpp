@@ -2671,11 +2671,12 @@ static const Preset* find_base_filament_preset(const PresetCollection& filaments
 
 static void apply_spoolman_settings_to_preset(Preset& preset, const std::string& spoolman_id, int nozzle_temp, int bed_temp)
 {
-    auto spool_opt = preset.config.option<ConfigOptionStrings>("filament_spoolman_id");
+    const auto normalized_spoolman_id = normalize_spoolman_id(spoolman_id);
+    auto       spool_opt              = preset.config.option<ConfigOptionStrings>("filament_spoolman_id");
     if (spool_opt) {
-        spool_opt->values = {spoolman_id};
+        spool_opt->values = {normalized_spoolman_id};
     } else {
-        preset.config.set_key_value("filament_spoolman_id", new ConfigOptionStrings{spoolman_id});
+        preset.config.set_key_value("filament_spoolman_id", new ConfigOptionStrings{normalized_spoolman_id});
     }
     if (nozzle_temp > 0) {
         if (auto nozzle_opt = preset.config.option<ConfigOptionInts>("nozzle_temperature")) {
@@ -2696,7 +2697,7 @@ static void apply_spoolman_settings_to_preset(Preset& preset, const std::string&
     auto notes_opt = preset.config.option<ConfigOptionStrings>("filament_notes");
     if (notes_opt) {
         std::string notes = notes_opt->values.empty() ? std::string() : notes_opt->values.front();
-        notes             = upsert_spoolman_id_in_notes(notes, normalize_spoolman_id(spoolman_id));
+        notes             = upsert_spoolman_id_in_notes(notes, normalized_spoolman_id);
         notes_opt->values = {notes};
     }
 }
@@ -2904,6 +2905,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         if (spoolman_id.empty() && ams.has("spool_id")) {
             spoolman_id = ams.opt_string("spool_id", 0u);
         }
+        spoolman_id           = normalize_spoolman_id(spoolman_id);
         int  nozzle_temp      = parse_optional_int(ams.opt_string("tray_nozzle_temp", 0u));
         int  bed_temp         = parse_optional_int(ams.opt_string("tray_bed_temp", 0u));
         auto build_spool_name = [](const std::string& name, const std::string& type, const std::string& spool_id,

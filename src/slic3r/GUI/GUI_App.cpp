@@ -3415,8 +3415,8 @@ void GUI_App::switch_printer_agent()
         std::shared_ptr<ICloudServiceAgent> cloud_agent = m_agent->get_cloud_agent();
 
         // Create new printer agent via registry
-        std::shared_ptr<IPrinterAgent> new_printer_agent = NetworkAgentFactory::create_printer_agent_by_id(effective_agent_id, cloud_agent,
-                                                                                                           log_dir);
+        std::shared_ptr<IPrinterAgent> new_printer_agent =
+            NetworkAgentFactory::create_printer_agent_by_id(effective_agent_id, cloud_agent, log_dir);
 
         if (!new_printer_agent) {
             BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << ": failed to create agent '" << effective_agent_id << "', keeping current agent";

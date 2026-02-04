@@ -4,7 +4,6 @@
 #include "IPrinterAgent.hpp"
 #include "ICloudServiceAgent.hpp"
 
-#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -70,8 +69,8 @@ public:
     int set_queue_on_main_fn(QueueOnMainFn fn) override;
 
     // Pull-mode agent (on-demand filament sync)
-    virtual FilamentSyncMode get_filament_sync_mode() const override { return FilamentSyncMode::pull; }
-    virtual bool fetch_filament_info(std::string dev_id) override;
+    FilamentSyncMode get_filament_sync_mode() const override { return FilamentSyncMode::pull; }
+    bool fetch_filament_info(std::string dev_id) override;
 
 protected:
     struct MoonrakerDeviceInfo
@@ -118,6 +117,9 @@ protected:
     std::string sanitize_filename(const std::string& filename);
     std::string join_url(const std::string& base_url, const std::string& path) const;
 
+    // Trim whitespace and convert to uppercase
+    static std::string trim_and_upper(const std::string& input);
+
     // Map filament type to OrcaFilamentLibrary preset ID for AMS sync compatibility
     static std::string map_filament_type_to_generic_id(const std::string& filament_type);
 
@@ -158,8 +160,8 @@ private:
     // Connection thread management
     void perform_connection_async(const std::string& dev_id,
                                    const std::string& base_url,
-                                   const std::string& api_key);
-    void finish_connection();
+                                   const std::string& api_key,
+                                   uint64_t generation);
 
     std::string                        ssdp_announced_host;
     std::string                        ssdp_announced_id;
@@ -194,11 +196,9 @@ private:
     std::string last_print_state;  // Track state for immediate dispatch on change
 
     // Connection thread management
-    std::atomic<bool>   connect_in_progress{false};
-    std::atomic<bool>   connect_stop_requested{false};
-    std::thread         connect_thread;
-    std::recursive_mutex connect_mutex;
-    std::condition_variable connect_cv;
+    std::atomic<uint64_t>  connect_generation{0};
+    std::thread            connect_thread;
+    std::recursive_mutex   connect_mutex;
 };
 
 } // namespace Slic3r

@@ -1728,12 +1728,10 @@ void PresetCollection::load_presets(const std::string&                   dir_pat
     if (presets_loaded.size() > 0)
         m_presets.insert(m_presets.end(), std::make_move_iterator(presets_loaded.begin()), std::make_move_iterator(presets_loaded.end()));
     sort_presets();
-    // BBS: add config related logs
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__
-                            << boost::format(": loaded %1% presets from %2%, type %3%") % presets_loaded.size() % dir %
-                                   Preset::get_type_string(m_type);
-    // this->select_preset(first_visible_idx());
-    if (!errors_cummulative.empty())
+    //BBS: add config related logs
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": loaded %1% presets from %2%, type %3%")%presets_loaded.size() %dir %Preset::get_type_string(m_type);
+    //this->select_preset(first_visible_idx());
+    if (! errors_cummulative.empty())
         throw Slic3r::RuntimeError(errors_cummulative);
 }
 
@@ -1931,8 +1929,8 @@ void PresetCollection::load_project_embedded_presets(std::vector<Preset*>&      
 
     m_presets.insert(m_presets.end(), std::make_move_iterator(presets_loaded.begin()), std::make_move_iterator(presets_loaded.end()));
     sort_presets();
-    // don't select it here
-    // this->select_preset(first_visible_idx());
+    //don't select it here
+    //this->select_preset(first_visible_idx());
     unlock();
 
     BOOST_LOG_TRIVIAL(debug) << __FUNCTION__
@@ -2346,11 +2344,9 @@ bool PresetCollection::load_user_preset(std::string                          nam
 void PresetCollection::update_after_user_presets_loaded()
 {
     lock();
+    std::string     selected_name = get_selected_preset_name();
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", before sort, type %1%, selected_idx %2%, selected_name %3%") %m_type %m_idx_selected %selected_name;
     sort_presets();
-    std::string selected_name = get_selected_preset_name();
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__
-                            << boost::format(", before sort, type %1%, selected_idx %2%, selected_name %3%") % m_type % m_idx_selected %
-                                   selected_name;
     this->select_preset_by_name(selected_name, false);
     unlock();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(", after sort, type %1%, selected_idx %2%") % m_type % m_idx_selected;
@@ -3177,8 +3173,8 @@ size_t PresetCollection::first_visible_idx() const
 {
     // BBS: set first visible filament to fla
     size_t first_visible = -1;
-    size_t idx           = m_default_suppressed ? m_num_default_presets : 0;
-    for (; idx < m_presets.size(); ++idx)
+    size_t idx = m_default_suppressed ? m_num_default_presets : 0;
+    for (; idx < m_presets.size(); ++ idx)
         if (m_presets[idx].is_visible && m_presets[idx].get_printer_id() == PresetBundle::ORCA_FILAMENT_LIBRARY) {
             if (first_visible == -1)
                 first_visible = idx;
@@ -3208,8 +3204,9 @@ size_t PresetCollection::first_visible_idx_by_type(const std::string& filament_t
     auto find_by_type = [&](const std::string& target) -> size_t {
         for (size_t i = start; i < m_presets.size(); ++i) {
             const auto& p = m_presets[i];
-            if (p.is_visible && p.is_compatible && p.is_system && get_preset_base(p) == &p &&
-                p.config.opt_string("filament_type", 0u) == target)
+            if (p.is_visible && p.is_compatible && p.is_system
+                && get_preset_base(p) == &p
+                && p.config.opt_string("filament_type", 0u) == target)
                 return i;
         }
         return size_t(-1);
@@ -3599,9 +3596,9 @@ std::vector<std::string> PresetCollection::merge_presets(PresetCollection&& othe
         if (preset.is_default || preset.is_external)
             continue;
         Preset key(m_type, preset.name);
-        auto   it = (m_type == Preset::TYPE_FILAMENT) ?
-                        std::lower_bound(m_presets.begin() + m_num_default_presets, m_presets.end(), key, filament_preset_less) :
-                        std::lower_bound(m_presets.begin() + m_num_default_presets, m_presets.end(), key);
+        auto it = (m_type == Preset::TYPE_FILAMENT)
+            ? std::lower_bound(m_presets.begin() + m_num_default_presets, m_presets.end(), key, filament_preset_less)
+            : std::lower_bound(m_presets.begin() + m_num_default_presets, m_presets.end(), key);
         if (it == m_presets.end() || it->name != preset.name) {
             if (preset.vendor != nullptr) {
                 // Re-assign a pointer to the vendor structure in the new PresetBundle.

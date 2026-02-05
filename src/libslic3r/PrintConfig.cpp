@@ -4459,12 +4459,12 @@ void PrintConfigDef::init_fff_params()
     // start and end point is from the change_filament_gcode
     def->set_default_value(new ConfigOptionPoints{Vec2d(30, -3), Vec2d(54, 245)});
 
-    def          = this->add("reduce_infill_retraction", coBool);
-    def->label   = L("Reduce infill retraction");
-    def->tooltip = L("Don't retract when the travel is in infill area absolutely. That means the oozing can't been seen. "
+    def = this->add("reduce_infill_retraction", coBool);
+    def->label = L("Reduce infill retraction");
+    def->tooltip = L("Don't retract when the travel is entirely within an infill area. That means the oozing can't been seen. "
                      "This can reduce times of retraction for complex model and save printing time, but make slicing and "
-                     "G-code generating slower.");
-    def->mode    = comAdvanced;
+                     "G-code generating slower. Note that z-hop is also not performed in areas where retraction is skipped.");
+    def->mode = comAdvanced;
     def->set_default_value(new ConfigOptionBool(false));
 
     def          = this->add("ooze_prevention", coBool);

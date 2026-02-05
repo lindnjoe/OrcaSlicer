@@ -47,7 +47,6 @@ cmake --build build/arm64 --config RelWithDebInfo --target all --
 ```
 
 
-
 ### Build System
 - Uses CMake with minimum version 3.13 (maximum 3.31.x on Windows)
 - Primary build directory: `build/`

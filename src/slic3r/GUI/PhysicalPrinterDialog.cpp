@@ -320,10 +320,10 @@ void PhysicalPrinterDialog::build_printhost_settings(ConfigOptionsGroup* m_optgr
     {
         // For bbl printers, we build a fake option to control whether the original device tab should be used
         ConfigOptionDef def;
-        def.type    = coBool;
-        def.width   = Field::def_width();
-        def.label   = L("View print host webui in Device tab");
-        def.tooltip = L("Replace the BambuLab's device tab with print host webui");
+        def.type     = coBool;
+        def.width    = Field::def_width_wider();
+        def.label    = L("View print host webui in Device tab");
+        def.tooltip  = L("Replace the BambuLab's device tab with print host webui");
         def.set_default_value(new ConfigOptionBool(false));
 
         auto option = Option(def, "bbl_use_print_host_webui");

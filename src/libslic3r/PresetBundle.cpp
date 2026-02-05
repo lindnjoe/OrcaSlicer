@@ -3035,6 +3035,10 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 assigned_spoolman_ids[filament_id] = normalize_spoolman_id(spoolman_id);
             }
         }
+        if (!spoolman_id.empty() && !filament_id.empty()) {
+            ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
+            assigned_spoolman_ids[filament_id] = normalize_spoolman_id(spoolman_id);
+        }
         ams_infos.push_back({filament_id.empty() ? false : true, false, is_placeholder, filament_color});
         AMSMapInfo temp = {ams_id, slot_id};
         ams_array_maps.push_back(temp);

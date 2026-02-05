@@ -2003,101 +2003,99 @@ Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, 
     }
 
     {
+        // Orca: Sidebar - Filament titlebar UI
+        // add filament title
+        p->m_panel_filament_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
+        p->m_panel_filament_title->SetBackgroundColor(title_bg);
+        p->m_panel_filament_title->SetBackgroundColor2(0xF1F1F1);
+        p->m_panel_filament_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent& e) {
+            if (e.GetPosition().x > (p->m_flushing_volume_btn->IsShown() ?
+                                         p->m_flushing_volume_btn->GetPosition().x :
+                                         (p->m_bpButton_add_filament->GetPosition().x -
+                                          FromDIP(30)))) // ORCA exclude area of del button from titlebar collapse/expand feature to fix
+                                                         // undesired collapse when user spams del filament button
+                return;
+            p->m_panel_filament_content->Show(!p->m_panel_filament_content->IsShown());
+            m_scrolled_sizer->Layout();
+        });
 
-    // Orca: Sidebar - Filament titlebar UI
-    // add filament title
-    p->m_panel_filament_title = new StaticBox(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL | wxBORDER_NONE);
-    p->m_panel_filament_title->SetBackgroundColor(title_bg);
-    p->m_panel_filament_title->SetBackgroundColor2(0xF1F1F1);
-    p->m_panel_filament_title->Bind(wxEVT_LEFT_UP, [this](wxMouseEvent &e) {
-        if (e.GetPosition().x > (p->m_flushing_volume_btn->IsShown()
-                ? p->m_flushing_volume_btn->GetPosition().x : (p->m_bpButton_add_filament->GetPosition().x - FromDIP(30)))) // ORCA exclude area of del button from titlebar collapse/expand feature to fix undesired collapse when user spams del filament button 
-            return;
-        p->m_panel_filament_content->Show(!p->m_panel_filament_content->IsShown());
-        m_scrolled_sizer->Layout();
-    });
+        wxBoxSizer* bSizer39;
+        bSizer39                          = new wxBoxSizer(wxHORIZONTAL);
+        p->m_filament_icon                = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "filament");
+        p->m_staticText_filament_settings = new Label(p->m_panel_filament_title, _L("Project Filaments"), LB_PROPAGATE_MOUSE_EVENT);
+        bSizer39->Add(p->m_filament_icon, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::TitlebarMargin()));
+        bSizer39->AddSpacer(FromDIP(SidebarProps::ElementSpacing()));
+        bSizer39->Add(p->m_staticText_filament_settings, 0, wxALIGN_CENTER);
+        bSizer39->Add(FromDIP(10), 0, 0, 0, 0);
+        bSizer39->SetMinSize(-1, FromDIP(30));
 
-    wxBoxSizer* bSizer39;
-    bSizer39 = new wxBoxSizer( wxHORIZONTAL );
-    p->m_filament_icon = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "filament");
-    p->m_staticText_filament_settings = new Label(p->m_panel_filament_title, _L("Project Filaments"), LB_PROPAGATE_MOUSE_EVENT);
-    bSizer39->Add(p->m_filament_icon, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::TitlebarMargin()));
-    bSizer39->AddSpacer(FromDIP(SidebarProps::ElementSpacing()));
-    bSizer39->Add( p->m_staticText_filament_settings, 0, wxALIGN_CENTER );
-    bSizer39->Add(FromDIP(10), 0, 0, 0, 0);
-    bSizer39->SetMinSize(-1, FromDIP(30));
+        p->m_panel_filament_title->SetSizer(bSizer39);
+        p->m_panel_filament_title->Layout();
+        auto spliter_1 = new ::StaticLine(p->scrolled);
+        spliter_1->SetLineColour("#A6A9AA");
+        scrolled_sizer->Add(spliter_1, 0, wxEXPAND);
+        scrolled_sizer->Add(p->m_panel_filament_title, 0, wxEXPAND | wxALL, 0);
+        auto spliter_2 = new ::StaticLine(p->scrolled);
+        spliter_2->SetLineColour("#CECECE");
+        scrolled_sizer->Add(spliter_2, 0, wxEXPAND);
 
-    p->m_panel_filament_title->SetSizer( bSizer39 );
-    p->m_panel_filament_title->Layout();
-    auto spliter_1 = new ::StaticLine(p->scrolled);
-    spliter_1->SetLineColour("#A6A9AA");
-    scrolled_sizer->Add(spliter_1, 0, wxEXPAND);
-    scrolled_sizer->Add(p->m_panel_filament_title, 0, wxEXPAND | wxALL, 0);
-    auto spliter_2 = new ::StaticLine(p->scrolled);
-    spliter_2->SetLineColour("#CECECE");
-    scrolled_sizer->Add(spliter_2, 0, wxEXPAND);
+        bSizer39->AddStretchSpacer(1);
 
-    bSizer39->AddStretchSpacer(1);
+        // BBS
+        // add wiping dialog
+        // wiping_dialog_button->SetFont(wxGetApp().normal_font());
+        p->m_flushing_volume_btn = new Button(p->m_panel_filament_title, _L("Flushing volumes"));
+        p->m_flushing_volume_btn->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
+        p->m_flushing_volume_btn->SetId(wxID_RESET);
+        auto has_modify = is_flush_config_modified();
+        set_flushing_volume_warning(has_modify);
 
-    // BBS
-    // add wiping dialog
-    //wiping_dialog_button->SetFont(wxGetApp().normal_font());
-    p->m_flushing_volume_btn = new Button(p->m_panel_filament_title, _L("Flushing volumes"));
-    p->m_flushing_volume_btn->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
-    p->m_flushing_volume_btn->SetId(wxID_RESET);
-    auto has_modify = is_flush_config_modified();
-    set_flushing_volume_warning(has_modify);
+        p->m_flushing_volume_btn->Bind(wxEVT_BUTTON, ([parent, this](wxCommandEvent& e) {
+                                           open_flushing_dialog(parent, SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, parent));
+                                           p->plater->get_view3D_canvas3D()->reload_scene(true);
+                                           p->plater->update();
+                                       }));
 
-    p->m_flushing_volume_btn->Bind(wxEVT_BUTTON, ([parent, this](wxCommandEvent &e) {
-            open_flushing_dialog(parent, SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, parent));
-            p->plater->get_view3D_canvas3D()->reload_scene(true);
-            p->plater->update();
-        }));
+        bSizer39->Add(p->m_flushing_volume_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(4));
+        bSizer39->Hide(p->m_flushing_volume_btn); // ORCA Ensure button is hidden on launch while 1 filament exist
 
-    bSizer39->Add(p->m_flushing_volume_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(4));
-    bSizer39->Hide(p->m_flushing_volume_btn); // ORCA Ensure button is hidden on launch while 1 filament exist
+        ScalableButton* add_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "add_filament");
+        add_btn->SetToolTip(_L("Add one filament"));
+        add_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent& e) { add_filament(); });
+        p->m_bpButton_add_filament = add_btn;
 
-    ScalableButton* add_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "add_filament");
-    add_btn->SetToolTip(_L("Add one filament"));
-    add_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent& e){
-        add_filament();
-    });
-    p->m_bpButton_add_filament = add_btn;
+        // ORCA Moved add button after delete button to prevent add button position change when remove icon automatically hidden
 
-    // ORCA Moved add button after delete button to prevent add button position change when remove icon automatically hidden
+        ScalableButton* del_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "delete_filament");
+        del_btn->SetToolTip(_L("Remove last filament"));
+        del_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent& e) { delete_filament(); });
+        p->m_bpButton_del_filament = del_btn;
 
-    ScalableButton* del_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "delete_filament");
-    del_btn->SetToolTip(_L("Remove last filament"));
-    del_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent &e) {
-        delete_filament();
-    });
-    p->m_bpButton_del_filament = del_btn;
+        bSizer39->Add(del_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::IconSpacing()));
+        bSizer39->Add(add_btn, 0, wxALIGN_CENTER | wxLEFT,
+                      FromDIP(SidebarProps::IconSpacing())); // ORCA Moved add button after delete button to prevent add button position
+                                                             // change when remove icon automatically hidden
 
-    bSizer39->Add(del_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::IconSpacing()));
-    bSizer39->Add(add_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::IconSpacing())); // ORCA Moved add button after delete button to prevent add button position change when remove icon automatically hidden
+        bSizer39->Hide(p->m_bpButton_del_filament); // ORCA Ensure button is hidden on launch while 1 filament exist
 
-    bSizer39->Hide(p->m_bpButton_del_filament); // ORCA Ensure button is hidden on launch while 1 filament exist
+        ams_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "ams_fila_sync", wxEmptyString, wxDefaultSize, wxDefaultPosition,
+                                     wxBU_EXACTFIT | wxNO_BORDER, false, 16); // ORCA match icon size with other icons as 16x16
+        ams_btn->SetToolTip(_L("Synchronize filament list from AMS"));
+        ams_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent& e) { sync_ams_list(); });
 
-    ams_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "ams_fila_sync", wxEmptyString, wxDefaultSize, wxDefaultPosition,
-                                                 wxBU_EXACTFIT | wxNO_BORDER, false, 16); // ORCA match icon size with other icons as 16x16
-    ams_btn->SetToolTip(_L("Synchronize filament list from AMS"));
-    ams_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent &e) {
-        sync_ams_list();
-    });
+        ams_btn->Bind(wxEVT_UPDATE_UI, &Sidebar::update_sync_ams_btn_enable, this);
+        p->m_bpButton_ams_filament = ams_btn;
 
-    ams_btn->Bind(wxEVT_UPDATE_UI, &Sidebar::update_sync_ams_btn_enable, this);
-    p->m_bpButton_ams_filament = ams_btn;
+        bSizer39->Add(ams_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::WideSpacing()));
+        // bSizer39->Add(FromDIP(10), 0, 0, 0, 0 );
 
-    bSizer39->Add(ams_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::WideSpacing()));
-    //bSizer39->Add(FromDIP(10), 0, 0, 0, 0 );
-
-    ScalableButton* set_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "settings");
-    set_btn->SetToolTip(_L("Set filaments to use"));
-    set_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent &e) {
-        p->editing_filament = -1;
-        // wxGetApp().params_dialog()->Popup();
-        // wxGetApp().get_tab(Preset::TYPE_FILAMENT)->restore_last_select_item();
-        wxGetApp().run_wizard(ConfigWizard::RR_USER, ConfigWizard::SP_FILAMENTS);
+        ScalableButton* set_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "settings");
+        set_btn->SetToolTip(_L("Set filaments to use"));
+        set_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
+            p->editing_filament = -1;
+            // wxGetApp().params_dialog()->Popup();
+            // wxGetApp().get_tab(Preset::TYPE_FILAMENT)->restore_last_select_item();
+            wxGetApp().run_wizard(ConfigWizard::RR_USER, ConfigWizard::SP_FILAMENTS);
         });
 
         wxBoxSizer* bSizer39;
@@ -3672,18 +3670,19 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
     wxGetApp().preset_bundle->export_selections(*wxGetApp().app_config);
     update_dynamic_filament_list();
 
-    auto badge_combox_filament = [](PlaterPresetComboBox *c) {
-        auto tip     = _L("Filament type and color information have been synchronized, but slot information is not included.");
+    auto badge_combox_filament = [](PlaterPresetComboBox* c) {
+        auto tip = _L("Filament type and color information have been synchronized, but slot information is not included.");
         c->SetToolTip(tip);
         c->ShowBadge(true);
     };
     { // badge ams filament
         clear_combos_filament_badge();
         if (sync_result.direct_sync) {
-            auto& ams_list = wxGetApp().preset_bundle->filament_ams_list;
+            auto&  ams_list = wxGetApp().preset_bundle->filament_ams_list;
             size_t tray_idx = 0;
             for (auto& entry : ams_list) {
-                if (tray_idx >= p->combos_filament.size()) break;
+                if (tray_idx >= p->combos_filament.size())
+                    break;
                 auto filament_id = entry.second.opt_string("filament_id", 0u);
                 if (!filament_id.empty()) {
                     badge_combox_filament(p->combos_filament[tray_idx]);

@@ -588,8 +588,10 @@ void Preset::save(DynamicPrintConfig* parent_config)
                     opt_dst->set(opt_src);
             }
         }
+        if (!filament_id.empty())
+            temp_config.set_key_value(BBL_JSON_KEY_FILAMENT_ID, new ConfigOptionString(filament_id));
         temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string());
-    } else if (!filament_id.empty() && inherits().empty()) {
+    } else if (!filament_id.empty()) {
         DynamicPrintConfig temp_config = config;
         temp_config.set_key_value(BBL_JSON_KEY_FILAMENT_ID, new ConfigOptionString(filament_id));
         temp_config.save_to_json(this->file, this->name, from_str, this->version.to_string());
@@ -1633,8 +1635,9 @@ void PresetCollection::load_presets(const std::string&                   dir_pat
                     }
                     const Preset& default_preset = this->default_preset_for(config);
                     if (inherit_preset) {
-                        preset.config      = inherit_preset->config;
-                        preset.filament_id = inherit_preset->filament_id;
+                        preset.config = inherit_preset->config;
+                        if (preset.filament_id.empty())
+                            preset.filament_id = inherit_preset->filament_id;
                         extend_default_config_length(config, false, {});
                         preset.config.update_diff_values_to_child_config(config, extruder_id_name, extruder_variant_name, *key_set1,
                                                                          *key_set2);

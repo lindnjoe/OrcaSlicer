@@ -98,12 +98,20 @@ MoonrakerPrinterAgent::MoonrakerPrinterAgent(std::string log_dir) : m_cloud_agen
 
 MoonrakerPrinterAgent::~MoonrakerPrinterAgent()
 {
-    disconnect_printer(); // This will handle thread cleanup
+    {
+        std::lock_guard<std::recursive_mutex> lock(connect_mutex);
+        device_info = MoonrakerDeviceInfo{};
+        ++connect_generation;
+    }
+    if (connect_thread.joinable()) {
+        connect_thread.join();
+    }
+    stop_status_stream();
 }
 
 AgentInfo MoonrakerPrinterAgent::get_agent_info_static()
 {
-    return AgentInfo{"moonraker", "Moonraker Printer Agent", MoonrakerPrinterAgent_VERSION, "Klipper/Moonraker printer agent"};
+    return AgentInfo{"moonraker", "Moonraker", MoonrakerPrinterAgent_VERSION, "Klipper/Moonraker printer agent"};
 }
 
 void MoonrakerPrinterAgent::set_cloud_agent(std::shared_ptr<ICloudServiceAgent> cloud)
@@ -133,29 +141,18 @@ int MoonrakerPrinterAgent::connect_printer(std::string dev_id, std::string dev_i
         return BAMBU_NETWORK_ERR_INVALID_HANDLE;
     }
 
-    // Check if connection already in progress
+    std::string base_url;
+    std::string api_key;
+    uint64_t gen;
     {
         std::lock_guard<std::recursive_mutex> lock(connect_mutex);
         init_device_info(dev_id, dev_ip, username, password, use_ssl);
-        if (connect_in_progress.load()) {
-            // Don't reject - wait for previous connection to complete
-            // This can happen if MonitorPanel triggers connect while previous connect is still running
-        } else {
-            connect_in_progress.store(true);
-            connect_stop_requested.store(false);
+        gen = ++connect_generation;
+        base_url = device_info.base_url;
+        api_key  = device_info.api_key;
+        if (connect_thread.joinable()) {
+            connect_thread.detach();
         }
-    }
-
-    // Wait for previous connection thread to finish
-    if (connect_thread.joinable()) {
-        connect_thread.join();
-    }
-
-    // Now we can start a new connection
-    {
-        std::lock_guard<std::recursive_mutex> lock(connect_mutex);
-        connect_in_progress.store(true);
-        connect_stop_requested.store(false);
     }
 
     // Stop existing status stream and clear state
@@ -168,28 +165,24 @@ int MoonrakerPrinterAgent::connect_printer(std::string dev_id, std::string dev_i
     ws_last_dispatch_ms.store(0);
     last_print_state.clear();
 
-    // Launch connection in background thread
-    connect_thread = std::thread([this, dev_id]() { perform_connection_async(dev_id, device_info.base_url, device_info.api_key); });
+    // Launch connection in background thread (capture by value to avoid data races)
+    {
+        std::lock_guard<std::recursive_mutex> lock(connect_mutex);
+        connect_thread = std::thread([this, dev_id, base_url, api_key, gen]() { perform_connection_async(dev_id, base_url, api_key, gen); });
+    }
 
     return BAMBU_NETWORK_SUCCESS;
 }
 
 int MoonrakerPrinterAgent::disconnect_printer()
 {
-    // Stop connection thread if running
     {
         std::lock_guard<std::recursive_mutex> lock(connect_mutex);
         device_info = MoonrakerDeviceInfo{};
-        if (connect_in_progress.load()) {
-            connect_stop_requested.store(true);
-            // Wake up any sleeping
-            connect_cv.notify_all();
+        ++connect_generation;  // Invalidate any in-flight connection
+        if (connect_thread.joinable()) {
+            connect_thread.detach();
         }
-    }
-
-    // Wait for connection thread to finish (with timeout)
-    if (connect_thread.joinable()) {
-        connect_thread.join();
     }
 
     stop_status_stream();
@@ -517,8 +510,8 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, int max_lane_index,
         ams_unit["id"]          = std::to_string(ams_id);
         ams_unit["info"]        = "0002"; // treat as AMS_LITE
 
-        nlohmann::json tray_array           = nlohmann::json::array();
-        int            max_slot_in_this_ams = std::min(3, max_lane_index - ams_id * 4);
+        nlohmann::json tray_array = nlohmann::json::array();
+        int max_slot_in_this_ams = std::min(3, max_lane_index - ams_id * 4);
         for (int slot_id = 0; slot_id <= max_slot_in_this_ams; ++slot_id) {
             int slot_index = ams_id * 4 + slot_id;
 
@@ -560,9 +553,9 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, int max_lane_index,
                     tray_json["spoolman_vendor_name"] = tray->vendor_name;
                 }
             } else {
-                tray_json["tray_info_idx"]         = "";
-                tray_json["tray_type"]             = "";
-                tray_json["tray_color"]            = "00000000";
+                tray_json["tray_info_idx"] = "";
+                tray_json["tray_type"] = "";
+                tray_json["tray_color"] = "00000000";
                 tray_json["tray_slot_placeholder"] = "1";
             }
 
@@ -701,6 +694,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         std::string name;
         std::string spool_name;
         std::string spool_id;
+        std::string filament_id;
         int         nozzle_temp{0};
         int         bed_temp{0};
         std::string color_hex;
@@ -719,6 +713,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             const auto& filament_json = spool_json["filament"];
             if (filament_json.contains("name") && filament_json["name"].is_string())
                 data.name = filament_json["name"].get<std::string>();
+            data.filament_id = safe_string_or_number(filament_json, "id");
             if (filament_json.contains("settings_extruder_temp") && filament_json["settings_extruder_temp"].is_number())
                 data.nozzle_temp = filament_json["settings_extruder_temp"].get<int>();
             if (filament_json.contains("settings_bed_temp") && filament_json["settings_bed_temp"].is_number())
@@ -732,6 +727,16 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             }
             if (filament_json.contains("material") && filament_json["material"].is_string())
                 data.material = filament_json["material"].get<std::string>();
+        }
+        if (data.filament_id.empty()) {
+            data.filament_id = safe_string_or_number(spool_json, "filament_id");
+        }
+        if (data.filament_id.empty() && spool_json.contains("filament") && !spool_json["filament"].is_object()) {
+            if (spool_json["filament"].is_number_integer() || spool_json["filament"].is_number_unsigned()) {
+                data.filament_id = std::to_string(spool_json["filament"].get<long long>());
+            } else if (spool_json["filament"].is_string()) {
+                data.filament_id = spool_json["filament"].get<std::string>();
+            }
         }
         return data;
     };
@@ -761,6 +766,143 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         if (spool_id.empty())
             return data;
 
+        auto build_spoolman_base_url = [&](const std::string& base_url, const std::string& spoolman_host) {
+            constexpr int spoolman_port = 7912;
+            const bool    has_override  = !spoolman_host.empty();
+            std::string   host_input    = has_override ? spoolman_host : base_url;
+            if (host_input.empty()) {
+                return std::string{};
+            }
+            std::string scheme = "http://";
+            std::string host   = host_input;
+            auto        pos    = host.find("://");
+            if (pos != std::string::npos) {
+                scheme = host.substr(0, pos + 3);
+                host   = host.substr(pos + 3);
+            }
+            auto slash_pos = host.find('/');
+            if (slash_pos != std::string::npos) {
+                host = host.substr(0, slash_pos);
+            }
+            if (host.empty()) {
+                return std::string{};
+            }
+            auto has_port = [](const std::string& host_value) {
+                auto colon_pos = host_value.rfind(':');
+                if (colon_pos == std::string::npos || host_value.find(']') != std::string::npos) {
+                    return false;
+                }
+                auto port_part = host_value.substr(colon_pos + 1);
+                return !port_part.empty() &&
+                       std::all_of(port_part.begin(), port_part.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+            };
+            auto strip_port = [&](const std::string& host_value) {
+                if (!has_port(host_value)) {
+                    return host_value;
+                }
+                return host_value.substr(0, host_value.rfind(':'));
+            };
+            if (!has_override) {
+                host = strip_port(host);
+                return scheme + host + ":" + std::to_string(spoolman_port);
+            }
+            if (!has_port(host)) {
+                return scheme + host + ":" + std::to_string(spoolman_port);
+            }
+            return scheme + host;
+        };
+
+        std::string spoolman_host_override;
+        if (auto* preset_bundle = GUI::wxGetApp().preset_bundle) {
+            if (preset_bundle->physical_printers.has_selection()) {
+                spoolman_host_override = preset_bundle->physical_printers.get_selected_printer().config.opt_string("spoolman_host");
+            }
+        }
+        if (auto* app_config = GUI::wxGetApp().app_config) {
+            if (spoolman_host_override.empty()) {
+                spoolman_host_override = app_config->get("spoolman_ip", device_info.dev_id);
+            }
+        }
+        auto spoolman_base_url  = build_spoolman_base_url(device_info.base_url, spoolman_host_override);
+        auto fetch_spoolman_url = [&](const std::string& path) {
+            if (spoolman_base_url.empty()) {
+                return std::string{};
+            }
+            std::string body;
+            bool        ok   = false;
+            auto        http = Http::get(join_url(spoolman_base_url, path));
+            http.timeout_connect(5)
+                .timeout_max(10)
+                .on_complete([&](std::string response, unsigned status) {
+                    if (status == 200) {
+                        body = std::move(response);
+                        ok   = true;
+                    }
+                })
+                .perform_sync();
+            return ok ? body : std::string{};
+        };
+
+        auto read_spoolman_response = [&](const std::string& body, bool expect_spool) {
+            if (body.empty()) {
+                return false;
+            }
+            auto response_json = nlohmann::json::parse(body, nullptr, false, true);
+            if (response_json.is_discarded()) {
+                return false;
+            }
+            const nlohmann::json* payload = &response_json;
+            if (response_json.contains("result")) {
+                payload = &response_json["result"];
+            }
+            if (expect_spool && payload->is_object()) {
+                data = read_spoolman_spool_data(*payload);
+                return !data.spool_name.empty() || !data.name.empty();
+            }
+            if (!expect_spool && payload->is_object()) {
+                data = read_spoolman_filament_data(*payload);
+                return !data.name.empty();
+            }
+            if (!expect_spool && payload->is_array()) {
+                for (const auto& entry : *payload) {
+                    if (!entry.is_object())
+                        continue;
+                    auto entry_id = safe_string_or_number(entry, "id");
+                    if (entry_id == spool_id) {
+                        data = read_spoolman_filament_data(entry);
+                        return !data.name.empty();
+                    }
+                }
+            }
+            return false;
+        };
+
+        auto fetch_filament_from_id = [&](const std::string& filament_id) {
+            if (filament_id.empty()) {
+                return false;
+            }
+            return read_spoolman_response(fetch_spoolman_url("/api/v1/filament/" + filament_id), false);
+        };
+
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/spool/" + spool_id), true)) {
+            if (data.name.empty() && !data.filament_id.empty()) {
+                fetch_filament_from_id(data.filament_id);
+            }
+            return data;
+        }
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament/" + spool_id), false)) {
+            return data;
+        }
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/spool"), true)) {
+            if (data.name.empty() && !data.filament_id.empty()) {
+                fetch_filament_from_id(data.filament_id);
+            }
+            return data;
+        }
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament"), false)) {
+            return data;
+        }
+
         std::string proxy_path = "/server/spoolman/proxy?path=/api/v1/spool/" + spool_id;
         std::string proxy_url  = join_url(device_info.base_url, proxy_path);
 
@@ -789,8 +931,40 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                 }
                 if (spool_json->is_object()) {
                     data = read_spoolman_spool_data(*spool_json);
-                    if (!data.spool_name.empty() || !data.name.empty())
+                    if (!data.spool_name.empty() || !data.name.empty()) {
+                        if (data.name.empty() && !data.filament_id.empty()) {
+                            proxy_path = "/server/spoolman/proxy?path=/api/v1/filament/" + data.filament_id;
+                            proxy_url  = join_url(device_info.base_url, proxy_path);
+                            proxy_body.clear();
+                            proxy_ok                 = false;
+                            auto proxy_filament_http = Http::get(proxy_url);
+                            if (!device_info.api_key.empty()) {
+                                proxy_filament_http.header("X-Api-Key", device_info.api_key);
+                            }
+                            proxy_filament_http.timeout_connect(5)
+                                .timeout_max(10)
+                                .on_complete([&](std::string body, unsigned status) {
+                                    if (status == 200) {
+                                        proxy_body = std::move(body);
+                                        proxy_ok   = true;
+                                    }
+                                })
+                                .perform_sync();
+                            if (proxy_ok) {
+                                auto proxy_filament_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
+                                if (!proxy_filament_json.is_discarded()) {
+                                    const nlohmann::json* filament_json = &proxy_filament_json;
+                                    if (proxy_filament_json.contains("result")) {
+                                        filament_json = &proxy_filament_json["result"];
+                                    }
+                                    if (filament_json->is_object()) {
+                                        data = read_spoolman_filament_data(*filament_json);
+                                    }
+                                }
+                            }
+                        }
                         return data;
+                    }
                 }
             }
         }
@@ -824,6 +998,72 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                     data = read_spoolman_filament_data(*filament_json);
                     if (!data.name.empty())
                         return data;
+                }
+            }
+        }
+
+        proxy_path = "/server/spoolman/proxy?path=/api/v1/spool";
+        proxy_url  = join_url(device_info.base_url, proxy_path);
+        proxy_body.clear();
+        proxy_ok              = false;
+        auto proxy_spool_http = Http::get(proxy_url);
+        if (!device_info.api_key.empty()) {
+            proxy_spool_http.header("X-Api-Key", device_info.api_key);
+        }
+        proxy_spool_http.timeout_connect(5)
+            .timeout_max(10)
+            .on_complete([&](std::string body, unsigned status) {
+                if (status == 200) {
+                    proxy_body = std::move(body);
+                    proxy_ok   = true;
+                }
+            })
+            .perform_sync();
+
+        if (proxy_ok) {
+            auto proxy_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
+            if (!proxy_json.is_discarded() && proxy_json.is_array()) {
+                for (const auto& entry : proxy_json) {
+                    if (!entry.is_object())
+                        continue;
+                    auto entry_id = safe_string_or_number(entry, "id");
+                    if (entry_id == spool_id) {
+                        data = read_spoolman_spool_data(entry);
+                        if (!data.name.empty() || !data.spool_name.empty()) {
+                            if (data.name.empty() && !data.filament_id.empty()) {
+                                proxy_path = "/server/spoolman/proxy?path=/api/v1/filament/" + data.filament_id;
+                                proxy_url  = join_url(device_info.base_url, proxy_path);
+                                proxy_body.clear();
+                                proxy_ok                 = false;
+                                auto proxy_filament_http = Http::get(proxy_url);
+                                if (!device_info.api_key.empty()) {
+                                    proxy_filament_http.header("X-Api-Key", device_info.api_key);
+                                }
+                                proxy_filament_http.timeout_connect(5)
+                                    .timeout_max(10)
+                                    .on_complete([&](std::string body, unsigned status) {
+                                        if (status == 200) {
+                                            proxy_body = std::move(body);
+                                            proxy_ok   = true;
+                                        }
+                                    })
+                                    .perform_sync();
+                                if (proxy_ok) {
+                                    auto proxy_filament_json = nlohmann::json::parse(proxy_body, nullptr, false, true);
+                                    if (!proxy_filament_json.is_discarded()) {
+                                        const nlohmann::json* filament_json = &proxy_filament_json;
+                                        if (proxy_filament_json.contains("result")) {
+                                            filament_json = &proxy_filament_json["result"];
+                                        }
+                                        if (filament_json->is_object()) {
+                                            data = read_spoolman_filament_data(*filament_json);
+                                        }
+                                    }
+                                }
+                            }
+                            return data;
+                        }
+                    }
                 }
             }
         }
@@ -885,101 +1125,16 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         }
 
         AmsTrayData tray;
-        tray.slot_index  = lane_index;
-        tray.tray_color  = safe_string(lane_obj, "color");
-        tray.tray_type   = safe_string(lane_obj, "material");
-        tray.spoolman_id = safe_string_or_number(lane_obj, "spoolman_id");
-        if (tray.spoolman_id.empty()) {
-            tray.spoolman_id = safe_string_or_number(lane_obj, "spool_id");
-        }
-        if (tray.spoolman_id.empty() && lane_obj.contains("spool")) {
-            const auto& spool_value = lane_obj["spool"];
-            if (spool_value.is_object()) {
-                tray.spoolman_id = safe_string_or_number(spool_value, "id");
-                if (tray.spoolman_id.empty())
-                    tray.spoolman_id = safe_string_or_number(spool_value, "spool_id");
-            } else if (spool_value.is_string() || spool_value.is_number_integer() || spool_value.is_number()) {
-                tray.spoolman_id = spool_value.dump();
-                if (spool_value.is_string())
-                    tray.spoolman_id = spool_value.get<std::string>();
-            }
-        }
-        auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
-        if (tray.spoolman_id.empty() && !filament_data.spool_id.empty()) {
-            tray.spoolman_id = filament_data.spool_id;
-        }
-        auto build_display_name = [](const SpoolmanFilamentData& data) {
-            auto looks_like_numeric = [](std::string value) {
-                boost::algorithm::trim(value);
-                if (value.empty())
-                    return false;
-                if (value.front() == '#') {
-                    value.erase(value.begin());
-                    boost::algorithm::trim(value);
-                }
-                return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
-            };
-            std::string base_name = data.spool_name;
-            if (!data.spool_id.empty() && (base_name == data.spool_id || looks_like_numeric(base_name))) {
-                base_name.clear();
-            }
-            if (base_name.empty()) {
-                if (!data.vendor_name.empty())
-                    base_name += data.vendor_name;
-                if (!data.name.empty())
-                    base_name += (base_name.empty() ? "" : " ") + data.name;
-                if (!data.material.empty())
-                    base_name += (base_name.empty() ? "" : " ") + data.material;
-            }
-            if (base_name.empty())
-                base_name = data.material;
-            if (!data.spool_id.empty() && !base_name.empty() && base_name.find(data.spool_id) == std::string::npos) {
-                base_name += " #" + data.spool_id;
-            }
-            return base_name;
-        };
-        tray.filament_name = build_display_name(filament_data);
-        if (tray.filament_name.empty()) {
-            tray.filament_name = filament_data.name;
-        }
-        tray.vendor_name = filament_data.vendor_name;
-        if (tray.filament_name.empty()) {
-            tray.filament_name = safe_string(lane_obj, "name");
-        }
-        if (tray.filament_name.empty()) {
-            tray.filament_name = safe_string(lane_obj, "spool_name");
-        }
-        if (tray.filament_name.empty()) {
-            tray.filament_name = safe_string(lane_obj, "filament_name");
-        }
-        if (tray.filament_name.empty()) {
-            tray.filament_name = safe_string(lane_obj, "material");
-        }
-        if (tray.tray_type.empty() && !filament_data.material.empty()) {
-            tray.tray_type = filament_data.material;
-        }
-        if (tray.tray_type.empty()) {
-            tray.tray_type = safe_string(lane_obj, "material");
-        }
-        if (tray.nozzle_temp == 0 && filament_data.nozzle_temp > 0) {
-            tray.nozzle_temp = filament_data.nozzle_temp;
-        }
-        if (tray.bed_temp == 0 && filament_data.bed_temp > 0) {
-            tray.bed_temp = filament_data.bed_temp;
-        }
-        if (tray.tray_color.empty() && !filament_data.color_hex.empty()) {
-            tray.tray_color = filament_data.color_hex;
-        }
-        int lane_bed_temp    = safe_int(lane_obj, "bed_temp");
-        int lane_nozzle_temp = safe_int(lane_obj, "nozzle_temp");
-        if (lane_bed_temp > 0) {
-            tray.bed_temp = lane_bed_temp;
-        }
-        if (lane_nozzle_temp > 0) {
-            tray.nozzle_temp = lane_nozzle_temp;
-        }
-        tray.has_filament  = !tray.tray_type.empty();
-        tray.tray_info_idx = map_filament_type_to_generic_id(tray.tray_type);
+        tray.slot_index = lane_index;
+        tray.tray_color = safe_string(lane_obj, "color");
+        tray.tray_type = safe_string(lane_obj, "material");
+        tray.bed_temp = safe_int(lane_obj, "bed_temp");
+        tray.nozzle_temp = safe_int(lane_obj, "nozzle_temp");
+        tray.has_filament = !tray.tray_type.empty();
+        auto* bundle = GUI::wxGetApp().preset_bundle;
+        tray.tray_info_idx = bundle
+            ? bundle->filaments.filament_id_by_type(tray.tray_type)
+            : map_filament_type_to_generic_id(tray.tray_type);
 
         max_lane_index = std::max(max_lane_index, lane_index);
         trays.push_back(tray);
@@ -998,11 +1153,18 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
     return true;
 }
 
+std::string MoonrakerPrinterAgent::trim_and_upper(const std::string& input)
+{
+    std::string result = input;
+    boost::trim(result);
+    std::transform(result.begin(), result.end(), result.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return result;
+}
+
 std::string MoonrakerPrinterAgent::map_filament_type_to_generic_id(const std::string& filament_type)
 {
-    std::string upper = filament_type;
-    boost::trim(upper);
-    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    const std::string upper = trim_and_upper(filament_type);
 
     // Map to OrcaFilamentLibrary preset IDs (compatible with all printers)
     // Source: resources/profiles/OrcaFilamentLibrary/filament/
@@ -1072,7 +1234,7 @@ std::string MoonrakerPrinterAgent::map_filament_type_to_generic_id(const std::st
         return "OFLSBS99";
 
     // Unknown material
-    return "__unknown__";
+    return UNKNOWN_FILAMENT_ID;
 }
 
 int MoonrakerPrinterAgent::handle_request(const std::string& dev_id, const std::string& json_str)
@@ -2130,14 +2292,12 @@ int MoonrakerPrinterAgent::pause_print(const std::string& dev_id)
 
 int MoonrakerPrinterAgent::resume_print(const std::string& dev_id)
 {
-    std::string gcode = "RESUME";
-    return send_gcode(dev_id, gcode) ? BAMBU_NETWORK_SUCCESS : BAMBU_NETWORK_ERR_SEND_MSG_FAILED;
+    return send_gcode(dev_id, "RESUME") ? BAMBU_NETWORK_SUCCESS : BAMBU_NETWORK_ERR_SEND_MSG_FAILED;
 }
 
 int MoonrakerPrinterAgent::cancel_print(const std::string& dev_id)
 {
-    std::string gcode = "CANCEL_PRINT";
-    return send_gcode(dev_id, gcode) ? BAMBU_NETWORK_SUCCESS : BAMBU_NETWORK_ERR_SEND_MSG_FAILED;
+    return send_gcode(dev_id, "CANCEL_PRINT") ? BAMBU_NETWORK_SUCCESS : BAMBU_NETWORK_ERR_SEND_MSG_FAILED;
 }
 
 bool MoonrakerPrinterAgent::send_jsonrpc_command(const std::string&    base_url,
@@ -2177,18 +2337,36 @@ bool MoonrakerPrinterAgent::send_jsonrpc_command(const std::string&    base_url,
     return success;
 }
 
-void MoonrakerPrinterAgent::perform_connection_async(const std::string& dev_id, const std::string& base_url, const std::string& api_key)
+void MoonrakerPrinterAgent::perform_connection_async(const std::string& dev_id, const std::string& base_url, const std::string& api_key, uint64_t generation)
 {
+    auto is_stale = [&]() { return generation != connect_generation.load(); };
+
     int         result = BAMBU_NETWORK_ERR_CONNECTION_TO_PRINTER_FAILED;
     std::string error_msg;
 
+    // Early exit if a newer connection was started before we begin
+    if (is_stale()) {
+        return;
+    }
+
     try {
-        if (!fetch_device_info(base_url, api_key, device_info, error_msg)) {
+        MoonrakerDeviceInfo fetched_info;
+        if (!fetch_device_info(base_url, api_key, fetched_info, error_msg)) {
             BOOST_LOG_TRIVIAL(error) << "MoonrakerPrinterAgent: Failed to fetch server info: " << error_msg;
             // Orca todo: revist here, for now don't send error, this is set current MachineObject to null
             // dispatch_local_connect(ConnectStatusFailed, dev_id, "server_info_failed");
-            finish_connection();
             return;
+        }
+
+        // Commit fetched info back to device_info under lock, only if still current
+        {
+            std::lock_guard<std::recursive_mutex> lock(connect_mutex);
+            if (is_stale()) {
+                return;
+            }
+            device_info.dev_name     = fetched_info.dev_name;
+            device_info.version      = fetched_info.version;
+            device_info.klippy_state = fetched_info.klippy_state;
         }
 
 // Orca todo: disable websocket for now, as we don't use MonitorPanel for Moonraker printers yet
@@ -2217,23 +2395,15 @@ void MoonrakerPrinterAgent::perform_connection_async(const std::string& dev_id, 
         result    = BAMBU_NETWORK_ERR_CONNECTION_TO_PRINTER_FAILED;
     }
 
-    // Dispatch final result to UI
-    if (result == BAMBU_NETWORK_SUCCESS) {
+    // Only dispatch if this connection is still the current one
+    if (result == BAMBU_NETWORK_SUCCESS && !is_stale()) {
         dispatch_local_connect(ConnectStatusOk, dev_id, "0");
         dispatch_printer_connected(dev_id);
         BOOST_LOG_TRIVIAL(info) << "MoonrakerPrinterAgent: connect_printer completed - dev_id=" << dev_id;
-    } else if (result != BAMBU_NETWORK_ERR_CANCELED) {
+    } else if (result != BAMBU_NETWORK_SUCCESS && result != BAMBU_NETWORK_ERR_CANCELED) {
         // Orca todo: revist here, for now don't send error, this is set current MachineObject to null
         // dispatch_local_connect(ConnectStatusFailed, dev_id, error_msg);
     }
-
-    finish_connection();
-}
-
-void MoonrakerPrinterAgent::finish_connection()
-{
-    std::lock_guard<std::recursive_mutex> lock(connect_mutex);
-    connect_in_progress.store(false);
 }
 
 bool MoonrakerPrinterAgent::is_numeric(const std::string& value)

@@ -24,7 +24,7 @@ namespace Slic3r {
 enum class CloudAgentProvider { Orca, BBL };
 
 static constexpr char ORCA_PRINTER_AGENT_ID[] = "orca";
-static constexpr char BBL_PRINTER_AGENT_ID[] = "bbl";
+static constexpr char BBL_PRINTER_AGENT_ID[]  = "bbl";
 
 // Factory function type for creating printer agents
 using PrinterAgentFactory =
@@ -124,7 +124,6 @@ public:
      * Should be called during application shutdown before destroying the NetworkAgent.
      */
     static void clear_printer_agent_cache();
-
     // ========================================================================
     // Cloud Agent Factory
     // ========================================================================

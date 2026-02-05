@@ -1710,12 +1710,14 @@ Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, 
             p->editing_filament = -1;
             if (p->combo_printer->switch_to_tab())
                 p->editing_filament = 0;
-            // ORCA: FIX crash on wxGTK, directly modifying UI (self->Hide() / parent->Layout()) inside a button event can crash because callbacks are not re-entrant, leaving widgets in an inconsistent state
+            // ORCA: FIX crash on wxGTK, directly modifying UI (self->Hide() / parent->Layout()) inside a button event can crash because
+            // callbacks are not re-entrant, leaving widgets in an inconsistent state
             wxGetApp().CallAfter([this, panel_color]() {
-                // ORCA clicking edit button not triggers wxEVT_KILL_FOCUS wxEVT_LEAVE_WINDOW make changes manually to prevent stucked colors when opening printer settings
+                // ORCA clicking edit button not triggers wxEVT_KILL_FOCUS wxEVT_LEAVE_WINDOW make changes manually to prevent stucked
+                // colors when opening printer settings
                 if (!p || !p->panel_printer_preset || !p->btn_edit_printer)
                     return;
-				p->panel_printer_preset->SetBorderColor(panel_color.bd_normal);
+                p->panel_printer_preset->SetBorderColor(panel_color.bd_normal);
                 p->btn_edit_printer->Hide();
                 p->panel_printer_preset->Layout();
             });
@@ -2107,115 +2109,6 @@ Sidebar::Sidebar(Plater* parent) : wxPanel(parent, wxID_ANY, wxDefaultPosition, 
         bSizer39->Add(p->m_staticText_filament_settings, 0, wxALIGN_CENTER);
         bSizer39->Add(FromDIP(10), 0, 0, 0, 0);
         bSizer39->SetMinSize(-1, FromDIP(30));
-
-    // add filament content
-    p->m_panel_filament_content = new wxScrolledWindow( p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL );
-    p->m_panel_filament_content->SetScrollbars(0, 100, 1, 2);
-    p->m_panel_filament_content->SetScrollRate(0, 5);
-    p->m_panel_filament_content->SetMaxSize(wxSize{-1, FromDIP(174)});
-    p->m_panel_filament_content->SetBackgroundColour(wxColour(255, 255, 255));
-
-    //wxBoxSizer* bSizer_filament_content;
-    //bSizer_filament_content = new wxBoxSizer( wxHORIZONTAL );
-
-    // Orca: Sidebar - Filament content UI: setup filament selection combos panel layout
-    // Creates a two-column grid layout for filament selection dropdowns within the scrollable panel
-    p->sizer_filaments = new wxBoxSizer(wxHORIZONTAL);
-    p->sizer_filaments->Add(new wxBoxSizer(wxVERTICAL), 1, wxEXPAND);
-    p->sizer_filaments->Add(new wxBoxSizer(wxVERTICAL), 1, wxEXPAND);
-
-    p->combos_filament.push_back(nullptr);
-
-    /* first filament item */
-    init_filament_combo(&p->combos_filament[0], 0);
-
-    //bSizer_filament_content->Add(p->sizer_filaments, 1, wxALIGN_CENTER | wxALL);
-    wxSizer *sizer_filaments2 = new wxBoxSizer(wxVERTICAL);
-    sizer_filaments2->Add(p->sizer_filaments, 0, wxEXPAND, 0);
-    p->m_panel_filament_content->SetSizer(sizer_filaments2);
-    p->m_panel_filament_content->Layout();
-    auto min_size = sizer_filaments2->GetMinSize();
-    if (min_size.y > p->m_panel_filament_content->GetMaxHeight())
-        min_size.y = p->m_panel_filament_content->GetMaxHeight();
-    p->m_panel_filament_content->SetMinSize(min_size);
-    scrolled_sizer->Add(p->m_panel_filament_content, 0, wxEXPAND | wxTOP | wxBOTTOM, FromDIP(SidebarProps::ContentMarginV())); // ORCA use vertical margin on parent otherwise it shows scrollbar even on 1 filament
-    }
-
-    {
-    //add project title
-    auto params_panel = ((MainFrame*)parent->GetParent())->m_param_panel;
-    if (params_panel) {
-        params_panel->get_top_panel()->Reparent(p->scrolled);
-        auto spliter_1 = new ::StaticLine(p->scrolled);
-        spliter_1->SetLineColour("#A6A9AA");
-        scrolled_sizer->Add(spliter_1, 0, wxEXPAND);
-        scrolled_sizer->Add(p->m_panel_filament_title, 0, wxEXPAND | wxALL, 0);
-        auto spliter_2 = new ::StaticLine(p->scrolled);
-        spliter_2->SetLineColour("#CECECE");
-        scrolled_sizer->Add(spliter_2, 0, wxEXPAND);
-
-        bSizer39->AddStretchSpacer(1);
-
-        // BBS
-        // add wiping dialog
-        // wiping_dialog_button->SetFont(wxGetApp().normal_font());
-        p->m_flushing_volume_btn = new Button(p->m_panel_filament_title, _L("Flushing volumes"));
-        p->m_flushing_volume_btn->SetStyle(ButtonStyle::Confirm, ButtonType::Compact);
-        p->m_flushing_volume_btn->SetId(wxID_RESET);
-        auto has_modify = is_flush_config_modified();
-        set_flushing_volume_warning(has_modify);
-
-        p->m_flushing_volume_btn->Bind(wxEVT_BUTTON, ([parent, this](wxCommandEvent& e) {
-                                           open_flushing_dialog(parent, SimpleEvent(EVT_SCHEDULE_BACKGROUND_PROCESS, parent));
-                                           p->plater->get_view3D_canvas3D()->reload_scene(true);
-                                           p->plater->update();
-                                       }));
-
-        bSizer39->Add(p->m_flushing_volume_btn, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(4));
-        bSizer39->Hide(p->m_flushing_volume_btn); // ORCA Ensure button is hidden on launch while 1 filament exist
-
-        ScalableButton* add_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "add_filament");
-        add_btn->SetToolTip(_L("Add one filament"));
-        add_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent& e) { add_filament(); });
-        p->m_bpButton_add_filament = add_btn;
-
-        // ORCA Moved add button after delete button to prevent add button position change when remove icon automatically hidden
-
-        ScalableButton* del_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "delete_filament");
-        del_btn->SetToolTip(_L("Remove last filament"));
-        del_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent& e) { delete_filament(); });
-        p->m_bpButton_del_filament = del_btn;
-
-        bSizer39->Add(del_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::IconSpacing()));
-        bSizer39->Add(add_btn, 0, wxALIGN_CENTER | wxLEFT,
-                      FromDIP(SidebarProps::IconSpacing())); // ORCA Moved add button after delete button to prevent add button position
-                                                             // change when remove icon automatically hidden
-
-        bSizer39->Hide(p->m_bpButton_del_filament); // ORCA Ensure button is hidden on launch while 1 filament exist
-
-        ams_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "ams_fila_sync", wxEmptyString, wxDefaultSize, wxDefaultPosition,
-                                     wxBU_EXACTFIT | wxNO_BORDER, false, 16); // ORCA match icon size with other icons as 16x16
-        ams_btn->SetToolTip(_L("Synchronize filament list from AMS"));
-        ams_btn->Bind(wxEVT_BUTTON, [this, scrolled_sizer](wxCommandEvent& e) { sync_ams_list(); });
-
-        ams_btn->Bind(wxEVT_UPDATE_UI, &Sidebar::update_sync_ams_btn_enable, this);
-        p->m_bpButton_ams_filament = ams_btn;
-
-        bSizer39->Add(ams_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::WideSpacing()));
-        // bSizer39->Add(FromDIP(10), 0, 0, 0, 0 );
-
-        ScalableButton* set_btn = new ScalableButton(p->m_panel_filament_title, wxID_ANY, "settings");
-        set_btn->SetToolTip(_L("Set filaments to use"));
-        set_btn->Bind(wxEVT_BUTTON, [this](wxCommandEvent& e) {
-            p->editing_filament = -1;
-            // wxGetApp().params_dialog()->Popup();
-            // wxGetApp().get_tab(Preset::TYPE_FILAMENT)->restore_last_select_item();
-            wxGetApp().run_wizard(ConfigWizard::RR_USER, ConfigWizard::SP_FILAMENTS);
-        });
-        p->m_bpButton_set_filament = set_btn;
-
-        bSizer39->Add(set_btn, 0, wxALIGN_CENTER | wxLEFT, FromDIP(SidebarProps::WideSpacing()));
-        bSizer39->AddSpacer(FromDIP(SidebarProps::TitlebarMargin()));
 
         // add filament content
         p->m_panel_filament_content = new wxScrolledWindow(p->scrolled, wxID_ANY, wxDefaultPosition, wxDefaultSize, wxTAB_TRAVERSAL);
@@ -3621,11 +3514,11 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         return;
     }
     // Replace unknown filament IDs with the resolved preset's filament_id
-    auto &filaments        = wxGetApp().preset_bundle->filaments;
-    auto &filament_presets = wxGetApp().preset_bundle->filament_presets;
+    auto& filaments        = wxGetApp().preset_bundle->filaments;
+    auto& filament_presets = wxGetApp().preset_bundle->filament_presets;
     for (size_t i = 0; i < list2.size() && i < filament_presets.size(); ++i) {
         if (list2[i] == UNKNOWN_FILAMENT_ID) {
-            const Preset *resolved = filaments.find_preset(filament_presets[i]);
+            const Preset* resolved = filaments.find_preset(filament_presets[i]);
             if (resolved)
                 list2[i] = resolved->filament_id;
         }
@@ -5444,11 +5337,12 @@ void Plater::priv::update(unsigned int flags)
     if (force_background_processing_restart)
         // Update the SLAPrint from the current Model, so that the reload_scene()
         // pulls the correct data.
-        update_status = this->update_background_process(false, flags & (unsigned int)UpdateParams::POSTPONE_VALIDATION_ERROR_MESSAGE);
-    //BBS TODO reload_scene
-    this->view3D->reload_scene(false, flags & (unsigned int)UpdateParams::FORCE_FULL_SCREEN_REFRESH);
-    if (is_preview_shown()) this->preview->reload_print();
-    //BBS assemble view
+        update_status = this->update_background_process(false, flags & (unsigned int) UpdateParams::POSTPONE_VALIDATION_ERROR_MESSAGE);
+    // BBS TODO reload_scene
+    this->view3D->reload_scene(false, flags & (unsigned int) UpdateParams::FORCE_FULL_SCREEN_REFRESH);
+    if (is_preview_shown())
+        this->preview->reload_print();
+    // BBS assemble view
     this->assemble_view->reload_scene(false, flags);
 
     if (current_panel && is_preview_shown()) {

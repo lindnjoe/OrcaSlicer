@@ -2365,12 +2365,15 @@ void PresetBundle::get_ams_cobox_infos(AMSComboInfo& combox_info)
 {
     combox_info.clear();
     for (auto& entry : filament_ams_list) {
-        auto& ams                  = entry.second;
-        auto  filament_id          = ams.opt_string("filament_id", 0u);
-        auto  filament_color       = ams.opt_string("filament_colour", 0u);
-        auto  ams_name             = ams.opt_string("tray_name", 0u);
-        auto  filament_changed     = !ams.has("filament_changed") || ams.opt_bool("filament_changed");
-        auto  filament_multi_color = ams.opt<ConfigOptionStrings>("filament_multi_colour")->values;
+        auto&                    ams              = entry.second;
+        auto                     filament_id      = ams.opt_string("filament_id", 0u);
+        auto                     filament_color   = ams.opt_string("filament_colour", 0u);
+        auto                     ams_name         = ams.opt_string("tray_name", 0u);
+        auto                     filament_changed = !ams.has("filament_changed") || ams.opt_bool("filament_changed");
+        std::vector<std::string> filament_multi_color;
+        if (const auto* multi_color_opt = ams.option<ConfigOptionStrings>("filament_multi_colour")) {
+            filament_multi_color = multi_color_opt->values;
+        }
         if (filament_id.empty()) {
             continue;
         }
@@ -2874,19 +2877,22 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
     };
     const auto compatible_printers = build_compatible_printers();
     for (auto& entry : filament_ams_list) {
-        auto& ams                  = entry.second;
-        auto  filament_id          = ams.opt_string("filament_id", 0u);
-        auto  filament_color       = ams.opt_string("filament_colour", 0u);
-        auto  filament_color_type  = ams.opt_string("filament_colour_type", 0u);
-        auto  filament_changed     = !ams.has("filament_changed") || ams.opt_bool("filament_changed");
-        auto  filament_multi_color = ams.opt<ConfigOptionStrings>("filament_multi_colour")->values;
-        auto  ams_id               = ams.opt_string("ams_id", 0u);
-        auto  slot_id              = ams.opt_string("slot_id", 0u);
-        auto  is_placeholder       = ams.has("filament_slot_placeholder") && ams.opt_bool("filament_slot_placeholder", 0u);
-        auto  filament_type        = ams.opt_string("filament_type", 0u);
-        auto  filament_name        = ams.opt_string("filament_name", 0u);
-        auto  spoolman_vendor      = ams.opt_string("spoolman_vendor_name", 0u);
-        auto  spoolman_id          = ams.opt_string("filament_spoolman_id", 0u);
+        auto&                    ams                 = entry.second;
+        auto                     filament_id         = ams.opt_string("filament_id", 0u);
+        auto                     filament_color      = ams.opt_string("filament_colour", 0u);
+        auto                     filament_color_type = ams.opt_string("filament_colour_type", 0u);
+        auto                     filament_changed    = !ams.has("filament_changed") || ams.opt_bool("filament_changed");
+        std::vector<std::string> filament_multi_color;
+        if (const auto* multi_color_opt = ams.option<ConfigOptionStrings>("filament_multi_colour")) {
+            filament_multi_color = multi_color_opt->values;
+        }
+        auto ams_id          = ams.opt_string("ams_id", 0u);
+        auto slot_id         = ams.opt_string("slot_id", 0u);
+        auto is_placeholder  = ams.has("filament_slot_placeholder") && ams.opt_bool("filament_slot_placeholder", 0u);
+        auto filament_type   = ams.opt_string("filament_type", 0u);
+        auto filament_name   = ams.opt_string("filament_name", 0u);
+        auto spoolman_vendor = ams.opt_string("spoolman_vendor_name", 0u);
+        auto spoolman_id     = ams.opt_string("filament_spoolman_id", 0u);
         if (ams.has("spoolman_filament_name")) {
             const auto spoolman_name = ams.opt_string("spoolman_filament_name", 0u);
             if (!spoolman_name.empty()) {
@@ -3165,6 +3171,10 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
     ConfigOptionStrings* filament_color      = project_config.option<ConfigOptionStrings>("filament_colour");
     ConfigOptionStrings* filament_color_type = project_config.option<ConfigOptionStrings>("filament_colour_type");
     ConfigOptionInts*    filament_map        = project_config.option<ConfigOptionInts>("filament_map");
+    if (!filament_color || !filament_color_type || !filament_map) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " missing project filament options for AMS sync";
+        return 0;
+    }
     if (use_map) {
         auto check_has_merge_info = [](std::map<int, AMSMapInfo>& maps, MergeFilamentInfo& merge_info, int exist_colors_size) {
             std::set<int> done;
@@ -3347,10 +3357,10 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         auto& print_config                   = this->prints.get_edited_preset().config;
         auto  support_filament_opt           = print_config.option<ConfigOptionInt>("support_filament");
         auto  support_interface_filament_opt = print_config.option<ConfigOptionInt>("support_interface_filament");
-        if (support_filament_opt->value > filament_color_type->values.size())
+        if (support_filament_opt && support_filament_opt->value > filament_color_type->values.size())
             support_filament_opt->value = 0;
 
-        if (support_interface_filament_opt->value > filament_color_type->values.size())
+        if (support_interface_filament_opt && support_interface_filament_opt->value > filament_color_type->values.size())
             support_interface_filament_opt->value = 0;
     }
     // Update ams_multi_color_filment
@@ -3378,6 +3388,10 @@ void PresetBundle::update_filament_multi_color()
         }
     }
     ConfigOptionStrings* filament_multi_colour = project_config.option<ConfigOptionStrings>("filament_multi_colour");
+    if (!filament_multi_colour) {
+        BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " missing filament_multi_colour option";
+        return;
+    }
     filament_multi_colour->resize(exsit_multi_colors.size());
     filament_multi_colour->values = exsit_multi_colors;
 }

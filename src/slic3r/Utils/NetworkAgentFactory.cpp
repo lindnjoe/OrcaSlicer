@@ -30,19 +30,17 @@ std::map<std::string, std::shared_ptr<IPrinterAgent>>& get_printer_agent_cache()
 // Helper to register a printer agent type with the standard factory pattern.
 // AgentTypes that take a log_dir constructor arg use the default; BBLPrinterAgent
 // (no log_dir) is registered separately.
-template<typename T>
-void register_agent()
+template<typename T> void register_agent()
 {
     auto info = T::get_agent_info_static();
-    NetworkAgentFactory::register_printer_agent(
-        info.id, info.name,
-        [](std::shared_ptr<ICloudServiceAgent> cloud_agent,
-           const std::string&                  log_dir) -> std::shared_ptr<IPrinterAgent> {
-            auto agent = std::make_shared<T>(log_dir);
-            if (cloud_agent)
-                agent->set_cloud_agent(cloud_agent);
-            return agent;
-        });
+    NetworkAgentFactory::register_printer_agent(info.id, info.name,
+                                                [](std::shared_ptr<ICloudServiceAgent> cloud_agent,
+                                                   const std::string&                  log_dir) -> std::shared_ptr<IPrinterAgent> {
+                                                    auto agent = std::make_shared<T>(log_dir);
+                                                    if (cloud_agent)
+                                                        agent->set_cloud_agent(cloud_agent);
+                                                    return agent;
+                                                });
 }
 
 } // anonymous namespace

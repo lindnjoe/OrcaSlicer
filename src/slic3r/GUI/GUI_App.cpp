@@ -3411,7 +3411,7 @@ void GUI_App::switch_printer_agent()
         current_agent_id = m_agent->get_printer_agent()->get_agent_info().id;
 
     if (current_agent_id != effective_agent_id) {
-        std::string log_dir = data_dir();
+        std::string                         log_dir     = data_dir();
         std::shared_ptr<ICloudServiceAgent> cloud_agent = m_agent->get_cloud_agent();
 
         // Create new printer agent via registry

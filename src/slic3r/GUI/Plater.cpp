@@ -49,6 +49,7 @@
 
 #include "libslic3r/libslic3r.h"
 #include "libslic3r/Format/STL.hpp"
+#include "libslic3r/Format/DRC.hpp"
 #include "libslic3r/Format/STEP.hpp"
 #include "libslic3r/Format/AMF.hpp"
 // #include "libslic3r/Format/3mf.hpp"
@@ -7075,40 +7076,55 @@ wxString Plater::priv::get_export_file(GUI::FileType file_type)
 {
     wxString wildcard;
     switch (file_type) {
-    case FT_STL:
-    case FT_AMF:
-    case FT_3MF:
-    case FT_GCODE:
-    case FT_OBJ: wildcard = file_wildcards(file_type); break;
-    default: wildcard = file_wildcards(FT_MODEL); break;
+        case FT_STL:
+        case FT_DRC:
+        case FT_AMF:
+        case FT_3MF:
+        case FT_GCODE:
+        case FT_OBJ:
+            wildcard = file_wildcards(file_type);
+        break;
+        default:
+            wildcard = file_wildcards(FT_MODEL);
+        break;
     }
 
     fs::path output_file = get_export_file_path(file_type);
 
     wxString dlg_title;
     switch (file_type) {
-    case FT_STL: {
-        output_file.replace_extension("stl");
-        dlg_title = _L("Export STL file:");
-        break;
-    }
-    case FT_AMF: {
-        // XXX: Problem on OS X with double extension?
-        output_file.replace_extension("zip.amf");
-        dlg_title = _L("Export AMF file:");
-        break;
-    }
-    case FT_3MF: {
-        output_file.replace_extension("3mf");
-        dlg_title = _L("Save file as:");
-        break;
-    }
-    case FT_OBJ: {
-        output_file.replace_extension("obj");
-        dlg_title = _L("Export OBJ file:");
-        break;
-    }
-    default: break;
+        case FT_STL:
+        {
+            output_file.replace_extension("stl");
+            dlg_title = _L("Export STL file:");
+            break;
+        }
+        case FT_DRC:
+        {
+            output_file.replace_extension("drc");
+            dlg_title = _L("Export Draco file:");
+            break;
+        }
+        case FT_AMF:
+        {
+            // XXX: Problem on OS X with double extension?
+            output_file.replace_extension("zip.amf");
+            dlg_title = _L("Export AMF file:");
+            break;
+        }
+        case FT_3MF:
+        {
+            output_file.replace_extension("3mf");
+            dlg_title = _L("Save file as:");
+            break;
+        }
+        case FT_OBJ:
+        {
+            output_file.replace_extension("obj");
+            dlg_title = _L("Export OBJ file:");
+            break;
+        }
+        default: break;
     }
 
     std::string out_dir = (boost::filesystem::path(output_file).parent_path()).string();
@@ -12804,7 +12820,15 @@ void Plater::calib_retraction(const Calib_Params& params)
 
     print_config->set_key_value("enable_wrapping_detection", new ConfigOptionBool(false));
 
-    double layer_height = 0.2;
+    float nozzle_diameter = printer_config->option<ConfigOptionFloats>("nozzle_diameter")->get_at(0);
+    float layer_height;
+    if (nozzle_diameter <= 0.1f) {
+        layer_height = 0.05f;
+    } else if (nozzle_diameter <= 0.2f) {
+        layer_height = 0.1f;
+    } else {
+        layer_height = 0.2f;
+    }
 
     auto max_lh = printer_config->option<ConfigOptionFloats>("max_layer_height");
     if (max_lh->values[0] < layer_height)
@@ -12924,8 +12948,7 @@ void Plater::calib_input_shaping_freq(const Calib_Params& params)
     filament_config->set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     filament_config->set_key_value("slow_down_min_speed", new ConfigOptionFloats{0.0});
     filament_config->set_key_value("slow_down_for_layer_cooling", new ConfigOptionBools{false});
-    print_config->set_key_value("layer_height", new ConfigOptionFloat(0.2));
-    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBool{false});
+    print_config->set_key_value("enable_overhang_speed", new ConfigOptionBool { false });
     print_config->set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config->set_key_value("wall_loops", new ConfigOptionInt(1));
     print_config->set_key_value("top_shell_layers", new ConfigOptionInt(0));
@@ -12996,7 +13019,6 @@ void Plater::calib_input_shaping_damp(const Calib_Params& params)
     filament_config->set_key_value("slow_down_layer_time", new ConfigOptionFloats{0.0});
     filament_config->set_key_value("slow_down_min_speed", new ConfigOptionFloats{0.0});
     filament_config->set_key_value("slow_down_for_layer_cooling", new ConfigOptionBools{false});
-    print_config->set_key_value("layer_height", new ConfigOptionFloat(0.2));
     print_config->set_key_value("enable_overhang_speed", new ConfigOptionBool{false});
     print_config->set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config->set_key_value("wall_loops", new ConfigOptionInt(1));
@@ -13059,7 +13081,6 @@ void Plater::Calib_Cornering(const Calib_Params& params)
     filament_config->set_key_value("slow_down_min_speed", new ConfigOptionFloats{0.0});
     filament_config->set_key_value("slow_down_for_layer_cooling", new ConfigOptionBools{false});
     filament_config->set_key_value("filament_max_volumetric_speed", new ConfigOptionFloats{200});
-    print_config->set_key_value("layer_height", new ConfigOptionFloat(0.2));
     print_config->set_key_value("enable_overhang_speed", new ConfigOptionBool{false});
     print_config->set_key_value("timelapse_type", new ConfigOptionEnum<TimelapseType>(tlTraditional));
     print_config->set_key_value("wall_loops", new ConfigOptionInt(1));
@@ -13681,7 +13702,7 @@ void ProjectDropDialog::on_dpi_changed(const wxRect& suggested_rect)
 // BBS: remove GCodeViewer as seperate APP logic
 bool Plater::load_files(const wxArrayString& filenames)
 {
-    const std::regex pattern_drop(".*[.](stp|step|stl|oltp|obj|amf|3mf|svg|zip)", std::regex::icase);
+    const std::regex pattern_drop(".*[.](stp|step|stl|oltp|obj|amf|3mf|svg|zip|drc)", std::regex::icase);
     const std::regex pattern_gcode_drop(".*[.](gcode|g)", std::regex::icase);
 
     std::vector<fs::path> normal_paths;
@@ -14741,10 +14762,22 @@ TriangleMesh Plater::combine_mesh_fff(const ModelObject& mo, int instance_id, st
 
 // BBS export with/without boolean, however, stil merge mesh
 #define EXPORT_WITH_BOOLEAN 0
-void Plater::export_stl(bool extended, bool selection_only, bool multi_stls)
+void Plater::export_stl(bool extended, bool selection_only, bool multi_stls, FileType file_type)
 {
     if (p->model.objects.empty()) {
         return;
+    }
+
+    int quality = 0;
+
+    switch (file_type) {
+    case FT_DRC:
+        AppConfig* app_config = wxGetApp().app_config;
+        if (app_config)
+            quality = stoi(app_config->get("drc_bits"));
+        else
+            quality = DRC_BITS_DEFAULT;
+        break;
     }
 
     wxString path;
@@ -14755,7 +14788,7 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls)
             path = dlg.GetPath() + "/";
         }
     } else {
-        path = p->get_export_file(FT_STL);
+        path = p->get_export_file(file_type);
     }
     if (path.empty()) {
         return;
@@ -14909,11 +14942,17 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls)
     else
         mesh_to_export = mesh_to_export_sla;
 
-    auto get_save_file = [](std::string const& dir, std::string const& name) {
-        auto path = dir + name + ".stl";
-        int  n    = 1;
+    auto get_save_file = [file_type](std::string const & dir, std::string const & name) {
+        std::string ext = "";
+        switch (file_type) {
+        case FT_STL: ext = ".stl"; break;
+        case FT_DRC: ext = ".drc"; break;
+        }
+
+        auto path = dir + name + ext;
+        int n = 1;
         while (boost::filesystem::exists(path))
-            path = dir + name + "(" + std::to_string(n++) + ").stl";
+            path = dir + name + "(" + std::to_string(n++) + ")"+ext;
         return path;
     };
 
@@ -14945,7 +14984,10 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls)
                 auto         mesh   = mesh_to_export(*object, i.second);
                 mesh.translate(-object->origin_translation.cast<float>());
 
-                Slic3r::store_stl(get_save_file(path_u8, object->name).c_str(), &mesh, true);
+                switch (file_type) {
+                case FT_STL: Slic3r::store_stl(get_save_file(path_u8, object->name).c_str(), &mesh, true); break;
+                case FT_DRC: Slic3r::store_drc(get_save_file(path_u8, object->name).c_str(), &mesh, quality); break;
+                }
             }
             return;
         }
@@ -14957,12 +14999,19 @@ void Plater::export_stl(bool extended, bool selection_only, bool multi_stls)
         for (const ModelObject* o : p->model.objects) {
             auto mesh = mesh_to_export(*o, -1);
             mesh.translate(-o->origin_translation.cast<float>());
-            Slic3r::store_stl(get_save_file(path_u8, o->name).c_str(), &mesh, true);
+
+            switch (file_type) {
+            case FT_STL: Slic3r::store_stl(get_save_file(path_u8, o->name).c_str(), &mesh, true); break;
+            case FT_DRC: Slic3r::store_drc(get_save_file(path_u8, o->name).c_str(), &mesh, quality); break;
+            }
         }
         return;
     }
 
-    Slic3r::store_stl(path_u8.c_str(), &mesh, true);
+    switch (file_type) {
+    case FT_STL: Slic3r::store_stl(path_u8.c_str(), &mesh, true); break;
+    case FT_DRC: Slic3r::store_drc(path_u8.c_str(), &mesh, quality); break;
+    }
 }
 
 // BBS: remove amf export

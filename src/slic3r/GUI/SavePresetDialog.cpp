@@ -122,7 +122,7 @@ SavePresetDialog::Item::Item(Preset::Type type, const std::string &suffix, wxBox
         // Bind the checkbox event to update the detach state for this item
         m_detach_checkbox->Bind(wxEVT_CHECKBOX, [this](wxCommandEvent&) { m_detach = m_detach_checkbox->GetValue(); });
     }
-
+    
     m_radio_group->Bind(wxEVT_COMMAND_RADIOBOX_SELECTED, [this](wxCommandEvent &e) {
         m_save_to_project = m_radio_group->GetSelection() == 1;
     });

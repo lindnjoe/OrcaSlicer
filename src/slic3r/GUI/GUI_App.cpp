@@ -531,21 +531,20 @@ static const FileWildcards file_wildcards_by_type[FT_SIZE] = {
     /* FT_GCODE */ {"G-code files"sv, {".gcode"sv}},
 #ifdef __APPLE__
     /* FT_MODEL */
-    {"Supported files"sv,
-     {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".usd"sv, ".usda"sv, ".usdc"sv, ".usdz"sv, ".abc"sv,
-      ".ply"sv}},
+    {"Supported files"sv, {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".usd"sv, ".usda"sv, ".usdc"sv, ".usdz"sv, ".abc"sv, ".ply"sv, ".drc"sv}},
 #else
     /* FT_MODEL */
-    {"Supported files"sv, {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv}},
+    {"Supported files"sv, {".3mf"sv, ".stl"sv, ".oltp"sv, ".stp"sv, ".step"sv, ".svg"sv, ".amf"sv, ".obj"sv, ".drc"sv}},
 #endif
-    /* FT_ZIP */ {"ZIP files"sv, {".zip"sv}},
-    /* FT_PROJECT */ {"Project files"sv, {".3mf"sv}},
-    /* FT_GALLERY */ {"Known files"sv, {".stl"sv, ".obj"sv}},
+    /* FT_ZIP */     { "ZIP files"sv,       { ".zip"sv } },
+    /* FT_PROJECT */ { "Project files"sv,   { ".3mf"sv} },
+    /* FT_GALLERY */ { "Known files"sv,     { ".stl"sv, ".obj"sv } },
 
-    /* FT_INI */ {"INI files"sv, {".ini"sv}},
-    /* FT_SVG */ {"SVG files"sv, {".svg"sv}},
-    /* FT_TEX */ {"Texture"sv, {".png"sv, ".svg"sv}},
-    /* FT_SL1 */ {"Masked SLA files"sv, {".sl1"sv, ".sl1s"sv}},
+    /* FT_INI */     { "INI files"sv,       { ".ini"sv } },
+    /* FT_SVG */     { "SVG files"sv,       { ".svg"sv } },
+    /* FT_TEX */     { "Texture"sv,         { ".png"sv, ".svg"sv } },
+    /* FT_SL1 */     { "Masked SLA files"sv, { ".sl1"sv, ".sl1s"sv } },
+    /* FT_DRC */     { "Draco files"sv,     { ".drc"sv } },
 };
 
 // This function produces a Win32 file dialog file template mask to be consumed by wxWidgets on all platforms.
@@ -4309,7 +4308,11 @@ void GUI_App::get_login_info()
                 GUI::wxGetApp().run_script(strJS);
             }
         }
-        mainframe->m_webview->SetLoginPanelVisibility(true);
+        if(app_config->get_bool("installed_networking")) {
+            mainframe->m_webview->SetLoginPanelVisibility(true);
+        } else {
+            mainframe->m_webview->SetLoginPanelVisibility(false);
+        }
     }
 }
 

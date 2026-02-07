@@ -9533,8 +9533,7 @@ void GLCanvas3D::_set_warning_notification(EWarning warning, bool state)
 
             if (error_iter->second.size() == 1) {
                 text += (boost::format(_u8L("Filament %s is placed in the %s, but the generated G-code path exceeds the printable range of the %s.")) %filaments %extruder_name %extruder_name).str();
-            }
-            else {
+            } else {
                 text += (boost::format(_u8L("Filaments %s are placed in the %s, but the generated G-code path exceeds the printable range of the %s.")) %filaments %extruder_name %extruder_name).str();
             }
         }

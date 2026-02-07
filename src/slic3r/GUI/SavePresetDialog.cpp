@@ -98,16 +98,19 @@ SavePresetDialog::Item::Item(Preset::Type type, const std::string &suffix, wxBox
     m_valid_label->SetForegroundColour(wxColor(255, 111, 0));
 
     sizer->Add(label_top, 0, wxEXPAND | wxLEFT | wxTOP | wxBOTTOM, BORDER_W);
-    sizer->Add(input_sizer_h, 0, wxALIGN_CENTER|wxLEFT|wxRIGHT, BORDER_W);
+    sizer->Add(input_sizer_h, 0, wxALIGN_CENTER | wxLEFT | wxRIGHT, BORDER_W);
     sizer->Add(m_valid_label, 0, wxEXPAND | wxLEFT | wxRIGHT, BORDER_W);
 
-    if (m_type == Preset::TYPE_PRINTER) m_parent->add_info_for_edit_ph_printer(sizer);
+    if (m_type == Preset::TYPE_PRINTER)
+        m_parent->add_info_for_edit_ph_printer(sizer);
 
     // ORCA RadioGroup
-    m_radio_group = new RadioGroup(m_parent, {
-        _L("User Preset"),          // 0
-        _L("Preset Inside Project") // 1
-    }, wxVERTICAL);
+    m_radio_group = new RadioGroup(m_parent,
+                                   {
+                                       _L("User Preset"),          // 0
+                                       _L("Preset Inside Project") // 1
+                                   },
+                                   wxVERTICAL);
 
     sizer->Add(m_radio_group, 0, wxEXPAND | wxTOP | wxLEFT, BORDER_W);
 

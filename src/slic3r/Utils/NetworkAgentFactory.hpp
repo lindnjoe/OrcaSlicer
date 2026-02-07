@@ -124,7 +124,6 @@ public:
      * Should be called during application shutdown before destroying the NetworkAgent.
      */
     static void clear_printer_agent_cache();
-
     // ========================================================================
     // Cloud Agent Factory
     // ========================================================================

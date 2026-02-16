@@ -21,6 +21,7 @@
 #include <cctype>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace {
 
@@ -1170,60 +1171,110 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             return false;
         }
 
-        auto parse_tool_index = [](std::string text) {
-            boost::algorithm::trim(text);
-            auto start_pos = text.find_first_of("0123456789");
-            if (start_pos == std::string::npos)
-                return -1;
-            text         = text.substr(start_pos);
-            auto end_pos = text.find_first_not_of("0123456789");
-            if (end_pos != std::string::npos)
-                text.resize(end_pos);
-            if (text.empty())
-                return -1;
-            try {
-                return std::stoi(text);
-            } catch (...) {
-                return -1;
-            }
-        };
-
         std::unordered_map<int, std::string> spool_by_tool;
-        nlohmann::json                       selected_tools_json;
-        std::string                          selected_tools_error;
-        if (fetch_json("/server/spoolman/selected", selected_tools_json, selected_tools_error) && selected_tools_json.contains("tools") &&
-            selected_tools_json["tools"].is_object()) {
-            for (const auto& [tool_key, spool_obj] : selected_tools_json["tools"].items()) {
-                if (!spool_obj.is_object())
-                    continue;
-                int tool_index = parse_tool_index(tool_key);
-                if (tool_index < 0) {
-                    tool_index = safe_int(spool_obj, "tool");
-                }
-                if (tool_index < 0) {
-                    tool_index = safe_int(spool_obj, "tool_number");
-                }
-                if (tool_index < 0)
-                    continue;
-
-                std::string spool_id = safe_string_or_number(spool_obj, "spool_id");
-                if (spool_id.empty() && spool_obj.contains("spool") && spool_obj["spool"].is_object()) {
-                    spool_id = safe_string_or_number(spool_obj["spool"], "id");
-                }
-                if (!spool_id.empty()) {
-                    spool_by_tool[tool_index] = spool_id;
-                }
-            }
-        } else if (!selected_tools_error.empty()) {
-            BOOST_LOG_TRIVIAL(info) << "MoonrakerPrinterAgent::fetch_filament_info: Failed to fetch /server/spoolman/selected: "
-                                    << selected_tools_error;
-        }
 
         std::vector<std::string> tool_names;
         if (toolchanger.contains("tool_names") && toolchanger["tool_names"].is_array()) {
             for (const auto& name_json : toolchanger["tool_names"]) {
                 tool_names.push_back(name_json.is_string() ? name_json.get<std::string>() : std::string{});
             }
+        }
+
+        auto normalize_spool_id_value = [](const nlohmann::json& value) {
+            if (value.is_number_integer()) {
+                return std::to_string(value.get<long long>());
+            }
+            if (value.is_number_unsigned()) {
+                return std::to_string(value.get<unsigned long long>());
+            }
+            if (value.is_string()) {
+                std::string spool_id = value.get<std::string>();
+                boost::algorithm::trim(spool_id);
+                if (spool_id.empty() || boost::iequals(spool_id, "none") || boost::iequals(spool_id, "null")) {
+                    return std::string{};
+                }
+                return spool_id;
+            }
+            return std::string{};
+        };
+
+        auto fetch_macro_spool_id = [&](const std::string& macro_name) {
+            std::string encoded_macro_name = macro_name;
+            boost::replace_all(encoded_macro_name, " ", "%20");
+
+            nlohmann::json macro_json;
+            std::string    macro_error;
+            if (!fetch_json("/printer/objects/query?gcode_macro%20" + encoded_macro_name, macro_json, macro_error) ||
+                !macro_json.contains("result") || !macro_json["result"].contains("status") || !macro_json["result"]["status"].is_object()) {
+                return std::string{};
+            }
+
+            const auto& status = macro_json["result"]["status"];
+            const auto  key    = "gcode_macro " + macro_name;
+            if (!status.contains(key) || !status[key].is_object()) {
+                return std::string{};
+            }
+
+            const auto& macro_obj = status[key];
+            if (macro_obj.contains("spool_id")) {
+                auto spool_id = normalize_spool_id_value(macro_obj["spool_id"]);
+                if (!spool_id.empty())
+                    return spool_id;
+            }
+            if (macro_obj.contains("variables") && macro_obj["variables"].is_object() && macro_obj["variables"].contains("spool_id")) {
+                return normalize_spool_id_value(macro_obj["variables"]["spool_id"]);
+            }
+            return std::string{};
+        };
+
+        int macro_tool_idx = 0;
+        for (const auto& tool_number_json : toolchanger["tool_numbers"]) {
+            if (!tool_number_json.is_number_integer() && !tool_number_json.is_number_unsigned()) {
+                ++macro_tool_idx;
+                continue;
+            }
+
+            int lane_index = tool_number_json.get<int>();
+            if (spool_by_tool.find(lane_index) != spool_by_tool.end()) {
+                ++macro_tool_idx;
+                continue;
+            }
+
+            std::vector<std::string> macro_candidates;
+            macro_candidates.push_back("T" + std::to_string(lane_index));
+            if (macro_tool_idx < static_cast<int>(tool_names.size())) {
+                std::string tool_name = tool_names[macro_tool_idx];
+                boost::algorithm::trim(tool_name);
+                if (!tool_name.empty()) {
+                    macro_candidates.push_back(tool_name);
+                    auto t_pos = tool_name.find_first_of("Tt");
+                    if (t_pos != std::string::npos) {
+                        std::string maybe_macro = "T";
+                        for (size_t i = t_pos + 1; i < tool_name.size() && std::isdigit(static_cast<unsigned char>(tool_name[i])); ++i) {
+                            maybe_macro.push_back(tool_name[i]);
+                        }
+                        if (maybe_macro.size() > 1) {
+                            macro_candidates.push_back(maybe_macro);
+                        }
+                    }
+                }
+            }
+
+            std::string                     macro_spool_id;
+            std::unordered_set<std::string> seen_macros;
+            for (const auto& macro_name : macro_candidates) {
+                if (!seen_macros.insert(macro_name).second) {
+                    continue;
+                }
+                macro_spool_id = fetch_macro_spool_id(macro_name);
+                if (!macro_spool_id.empty()) {
+                    break;
+                }
+            }
+            if (!macro_spool_id.empty()) {
+                spool_by_tool[lane_index] = macro_spool_id;
+            }
+            ++macro_tool_idx;
         }
 
         int tool_idx = 0;

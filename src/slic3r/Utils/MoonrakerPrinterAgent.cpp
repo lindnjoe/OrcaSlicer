@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <cctype>
 #include <thread>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace {
 
@@ -612,54 +614,82 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, int max_lane_index,
 
 bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
 {
-    // Fetch AFC lane data from Moonraker database (inline)
-    std::string url = join_url(device_info.base_url, "/server/database/item?namespace=lane_data");
+    enum class FilamentSource { afc, happyhare, toolchanger };
 
-    std::string response_body;
-    bool        success = false;
-    std::string http_error;
+    auto fetch_json = [&](const std::string& relative_url, nlohmann::json& json_out, std::string& error_out) {
+        std::string response_body;
+        bool        success = false;
 
-    auto http = Http::get(url);
-    if (!device_info.api_key.empty()) {
-        http.header("X-Api-Key", device_info.api_key);
-    }
-    http.timeout_connect(5)
-        .timeout_max(10)
-        .on_complete([&](std::string body, unsigned status) {
-            if (status == 200) {
-                response_body = body;
-                success       = true;
-            } else {
-                http_error = "HTTP error: " + std::to_string(status);
-            }
-        })
-        .on_error([&](std::string body, std::string err, unsigned status) {
-            http_error = err;
-            if (status > 0) {
-                http_error += " (HTTP " + std::to_string(status) + ")";
-            }
-        })
-        .perform_sync();
+        auto http = Http::get(join_url(device_info.base_url, relative_url));
+        if (!device_info.api_key.empty()) {
+            http.header("X-Api-Key", device_info.api_key);
+        }
+        http.timeout_connect(5)
+            .timeout_max(10)
+            .on_complete([&](std::string body, unsigned status) {
+                if (status == 200) {
+                    response_body = std::move(body);
+                    success       = true;
+                } else {
+                    error_out = "HTTP error: " + std::to_string(status);
+                }
+            })
+            .on_error([&](std::string body, std::string err, unsigned status) {
+                error_out = std::move(err);
+                if (status > 0) {
+                    error_out += " (HTTP " + std::to_string(status) + ")";
+                }
+            })
+            .perform_sync();
 
-    if (!success) {
-        BOOST_LOG_TRIVIAL(warning) << "MoonrakerPrinterAgent::fetch_filament_info: Failed to fetch lane data: " << http_error;
-        return false;
-    }
+        if (!success) {
+            return false;
+        }
 
-    auto json = nlohmann::json::parse(response_body, nullptr, false, true);
-    if (json.is_discarded()) {
-        BOOST_LOG_TRIVIAL(warning) << "MoonrakerPrinterAgent::fetch_filament_info: Invalid JSON response";
-        return false;
-    }
+        json_out = nlohmann::json::parse(response_body, nullptr, false, true);
+        if (json_out.is_discarded()) {
+            error_out = "Invalid JSON response";
+            return false;
+        }
+        return true;
+    };
 
-    // Expected structure: { "result": { "namespace": "lane_data", "value": { "lane1": {...}, ... } } }
-    if (!json.contains("result") || !json["result"].contains("value") || !json["result"]["value"].is_object()) {
-        BOOST_LOG_TRIVIAL(warning) << "MoonrakerPrinterAgent::fetch_filament_info: Unexpected JSON structure or no lane_data found";
-        return false;
+    auto get_namespace_value = [&](const std::string& ns, nlohmann::json& value_out) {
+        nlohmann::json response_json;
+        std::string    error;
+        if (!fetch_json("/server/database/item?namespace=" + ns, response_json, error)) {
+            return false;
+        }
+        if (!response_json.contains("result") || !response_json["result"].contains("value")) {
+            return false;
+        }
+        value_out = response_json["result"]["value"];
+        return value_out.is_object();
+    };
+
+    nlohmann::json value;
+    nlohmann::json toolchanger;
+    FilamentSource source = FilamentSource::afc;
+
+    if (get_namespace_value("lane_data", value) && !value.empty()) {
+        source = FilamentSource::afc;
+    } else if ((get_namespace_value("happy_hare", value) || get_namespace_value("happyhare", value)) && !value.empty()) {
+        source = FilamentSource::happyhare;
+    } else {
+        nlohmann::json response_json;
+        std::string    error;
+        if (!fetch_json("/printer/objects/query?toolchanger", response_json, error) || !response_json.contains("result") ||
+            !response_json["result"].contains("status") || !response_json["result"]["status"].contains("toolchanger") ||
+            !response_json["result"]["status"]["toolchanger"].is_object()) {
+            BOOST_LOG_TRIVIAL(warning)
+                << "MoonrakerPrinterAgent::fetch_filament_info: No AFC/HappyHare lane data and toolchanger detection failed";
+            return false;
+        }
+        toolchanger = response_json["result"]["status"]["toolchanger"];
+        source      = FilamentSource::toolchanger;
     }
 
     // Parse response into AmsTrayData
-    const auto&              value = json["result"]["value"];
     std::vector<AmsTrayData> trays;
     int                      max_lane_index = 0;
 
@@ -1104,131 +1134,303 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         return data;
     };
 
-    for (const auto& [lane_key, lane_obj] : value.items()) {
-        if (!lane_obj.is_object()) {
-            continue;
-        }
-
-        // Extract lane index from the "lane" field (tool number, 0-based)
-        std::string lane_str   = safe_string(lane_obj, "lane");
-        int         lane_index = -1;
-        if (!lane_str.empty()) {
-            try {
-                lane_index = std::stoi(lane_str);
-            } catch (...) {
-                lane_index = -1;
-            }
-        }
-
-        if (lane_index < 0) {
-            continue;
-        }
-
-        AmsTrayData tray;
-        tray.slot_index  = lane_index;
-        tray.tray_color  = safe_string(lane_obj, "color");
-        tray.tray_type   = safe_string(lane_obj, "material");
-        tray.spoolman_id = safe_string_or_number(lane_obj, "spoolman_id");
-        if (tray.spoolman_id.empty()) {
-            tray.spoolman_id = safe_string_or_number(lane_obj, "spool_id");
-        }
-        if (tray.spoolman_id.empty() && lane_obj.contains("spool")) {
-            const auto& spool_value = lane_obj["spool"];
-            if (spool_value.is_object()) {
-                tray.spoolman_id = safe_string_or_number(spool_value, "id");
-                if (tray.spoolman_id.empty())
-                    tray.spoolman_id = safe_string_or_number(spool_value, "spool_id");
-            } else if (spool_value.is_string() || spool_value.is_number_integer() || spool_value.is_number()) {
-                tray.spoolman_id = spool_value.dump();
-                if (spool_value.is_string())
-                    tray.spoolman_id = spool_value.get<std::string>();
-            }
-        }
-        auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
-        if (tray.spoolman_id.empty() && !filament_data.spool_id.empty()) {
-            tray.spoolman_id = filament_data.spool_id;
-        }
-        auto build_display_name = [](const SpoolmanFilamentData& data) {
-            auto looks_like_numeric = [](std::string value) {
+    auto build_display_name = [](const SpoolmanFilamentData& data) {
+        auto looks_like_numeric = [](std::string value) {
+            boost::algorithm::trim(value);
+            if (value.empty())
+                return false;
+            if (value.front() == '#') {
+                value.erase(value.begin());
                 boost::algorithm::trim(value);
-                if (value.empty())
-                    return false;
-                if (value.front() == '#') {
-                    value.erase(value.begin());
-                    boost::algorithm::trim(value);
-                }
-                return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
-            };
-            std::string base_name = data.spool_name;
-            if (!data.spool_id.empty() && (base_name == data.spool_id || looks_like_numeric(base_name))) {
-                base_name.clear();
             }
-            if (base_name.empty()) {
-                if (!data.vendor_name.empty())
-                    base_name += data.vendor_name;
-                if (!data.name.empty())
-                    base_name += (base_name.empty() ? "" : " ") + data.name;
-                if (!data.material.empty())
-                    base_name += (base_name.empty() ? "" : " ") + data.material;
-            }
-            if (base_name.empty())
-                base_name = data.material;
-            if (!data.spool_id.empty() && !base_name.empty() && base_name.find(data.spool_id) == std::string::npos) {
-                base_name += " #" + data.spool_id;
-            }
-            return base_name;
+            return !value.empty() && std::all_of(value.begin(), value.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
         };
-        tray.filament_name = build_display_name(filament_data);
-        if (tray.filament_name.empty()) {
-            tray.filament_name = filament_data.name;
+        std::string base_name = data.spool_name;
+        if (!data.spool_id.empty() && (base_name == data.spool_id || looks_like_numeric(base_name))) {
+            base_name.clear();
         }
-        tray.vendor_name = filament_data.vendor_name;
-        if (tray.filament_name.empty()) {
-            tray.filament_name = safe_string(lane_obj, "name");
+        if (base_name.empty()) {
+            if (!data.vendor_name.empty())
+                base_name += data.vendor_name;
+            if (!data.name.empty())
+                base_name += (base_name.empty() ? "" : " ") + data.name;
+            if (!data.material.empty())
+                base_name += (base_name.empty() ? "" : " ") + data.material;
         }
-        if (tray.filament_name.empty()) {
-            tray.filament_name = safe_string(lane_obj, "spool_name");
+        if (base_name.empty())
+            base_name = data.material;
+        if (!data.spool_id.empty() && !base_name.empty() && base_name.find(data.spool_id) == std::string::npos) {
+            base_name += " #" + data.spool_id;
         }
-        if (tray.filament_name.empty()) {
-            tray.filament_name = safe_string(lane_obj, "filament_name");
-        }
-        if (tray.filament_name.empty()) {
-            tray.filament_name = safe_string(lane_obj, "material");
-        }
-        if (tray.tray_type.empty() && !filament_data.material.empty()) {
-            tray.tray_type = filament_data.material;
-        }
-        if (tray.tray_type.empty()) {
-            tray.tray_type = safe_string(lane_obj, "material");
-        }
-        if (tray.nozzle_temp == 0 && filament_data.nozzle_temp > 0) {
-            tray.nozzle_temp = filament_data.nozzle_temp;
-        }
-        if (tray.bed_temp == 0 && filament_data.bed_temp > 0) {
-            tray.bed_temp = filament_data.bed_temp;
-        }
-        if (tray.tray_color.empty() && !filament_data.color_hex.empty()) {
-            tray.tray_color = filament_data.color_hex;
-        }
-        int lane_bed_temp    = safe_int(lane_obj, "bed_temp");
-        int lane_nozzle_temp = safe_int(lane_obj, "nozzle_temp");
-        if (lane_bed_temp > 0) {
-            tray.bed_temp = lane_bed_temp;
-        }
-        if (lane_nozzle_temp > 0) {
-            tray.nozzle_temp = lane_nozzle_temp;
-        }
-        tray.has_filament  = !tray.tray_type.empty();
-        auto* bundle       = GUI::wxGetApp().preset_bundle;
-        tray.tray_info_idx = bundle ? bundle->filaments.filament_id_by_type(tray.tray_type) :
-                                      map_filament_type_to_generic_id(tray.tray_type);
+        return base_name;
+    };
 
-        max_lane_index = std::max(max_lane_index, lane_index);
-        trays.push_back(tray);
+    if (source == FilamentSource::toolchanger) {
+        if (!toolchanger.contains("tool_numbers") || !toolchanger["tool_numbers"].is_array()) {
+            BOOST_LOG_TRIVIAL(warning) << "MoonrakerPrinterAgent::fetch_filament_info: toolchanger found but tool_numbers is missing";
+            return false;
+        }
+
+        std::unordered_map<int, std::string> spool_by_tool;
+
+        std::vector<std::string> tool_names;
+        if (toolchanger.contains("tool_names") && toolchanger["tool_names"].is_array()) {
+            for (const auto& name_json : toolchanger["tool_names"]) {
+                tool_names.push_back(name_json.is_string() ? name_json.get<std::string>() : std::string{});
+            }
+        }
+
+        auto normalize_spool_id_value = [](const nlohmann::json& value) {
+            if (value.is_number_integer()) {
+                return std::to_string(value.get<long long>());
+            }
+            if (value.is_number_unsigned()) {
+                return std::to_string(value.get<unsigned long long>());
+            }
+            if (value.is_string()) {
+                std::string spool_id = value.get<std::string>();
+                boost::algorithm::trim(spool_id);
+                if (spool_id.empty() || boost::iequals(spool_id, "none") || boost::iequals(spool_id, "null")) {
+                    return std::string{};
+                }
+                return spool_id;
+            }
+            return std::string{};
+        };
+
+        auto fetch_macro_spool_id = [&](const std::string& macro_name) {
+            std::string encoded_macro_name = macro_name;
+            boost::replace_all(encoded_macro_name, " ", "%20");
+
+            nlohmann::json macro_json;
+            std::string    macro_error;
+            if (!fetch_json("/printer/objects/query?gcode_macro%20" + encoded_macro_name, macro_json, macro_error) ||
+                !macro_json.contains("result") || !macro_json["result"].contains("status") || !macro_json["result"]["status"].is_object()) {
+                return std::string{};
+            }
+
+            const auto& status = macro_json["result"]["status"];
+            const auto  key    = "gcode_macro " + macro_name;
+            if (!status.contains(key) || !status[key].is_object()) {
+                return std::string{};
+            }
+
+            const auto& macro_obj = status[key];
+            if (macro_obj.contains("spool_id")) {
+                auto spool_id = normalize_spool_id_value(macro_obj["spool_id"]);
+                if (!spool_id.empty())
+                    return spool_id;
+            }
+            if (macro_obj.contains("variables") && macro_obj["variables"].is_object() && macro_obj["variables"].contains("spool_id")) {
+                return normalize_spool_id_value(macro_obj["variables"]["spool_id"]);
+            }
+            return std::string{};
+        };
+
+        int macro_tool_idx = 0;
+        for (const auto& tool_number_json : toolchanger["tool_numbers"]) {
+            if (!tool_number_json.is_number_integer() && !tool_number_json.is_number_unsigned()) {
+                ++macro_tool_idx;
+                continue;
+            }
+
+            int lane_index = tool_number_json.get<int>();
+            if (spool_by_tool.find(lane_index) != spool_by_tool.end()) {
+                ++macro_tool_idx;
+                continue;
+            }
+
+            std::vector<std::string> macro_candidates;
+            macro_candidates.push_back("T" + std::to_string(lane_index));
+            if (macro_tool_idx < static_cast<int>(tool_names.size())) {
+                std::string tool_name = tool_names[macro_tool_idx];
+                boost::algorithm::trim(tool_name);
+                if (!tool_name.empty()) {
+                    macro_candidates.push_back(tool_name);
+                    auto t_pos = tool_name.find_first_of("Tt");
+                    if (t_pos != std::string::npos) {
+                        std::string maybe_macro = "T";
+                        for (size_t i = t_pos + 1; i < tool_name.size() && std::isdigit(static_cast<unsigned char>(tool_name[i])); ++i) {
+                            maybe_macro.push_back(tool_name[i]);
+                        }
+                        if (maybe_macro.size() > 1) {
+                            macro_candidates.push_back(maybe_macro);
+                        }
+                    }
+                }
+            }
+
+            std::string                     macro_spool_id;
+            std::unordered_set<std::string> seen_macros;
+            for (const auto& macro_name : macro_candidates) {
+                if (!seen_macros.insert(macro_name).second) {
+                    continue;
+                }
+                macro_spool_id = fetch_macro_spool_id(macro_name);
+                if (!macro_spool_id.empty()) {
+                    break;
+                }
+            }
+            if (!macro_spool_id.empty()) {
+                spool_by_tool[lane_index] = macro_spool_id;
+            }
+            ++macro_tool_idx;
+        }
+
+        int tool_idx = 0;
+        for (const auto& tool_number_json : toolchanger["tool_numbers"]) {
+            if (!tool_number_json.is_number_integer() && !tool_number_json.is_number_unsigned()) {
+                ++tool_idx;
+                continue;
+            }
+
+            int         lane_index = tool_number_json.get<int>();
+            AmsTrayData tray;
+            tray.slot_index = lane_index;
+            tray.tray_color = "00000000";
+
+            auto spool_it = spool_by_tool.find(lane_index);
+            if (spool_it != spool_by_tool.end()) {
+                tray.spoolman_id = spool_it->second;
+            }
+
+            auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
+            if (tray.spoolman_id.empty() && !filament_data.spool_id.empty()) {
+                tray.spoolman_id = filament_data.spool_id;
+            }
+
+            tray.filament_name = build_display_name(filament_data);
+            if (tray.filament_name.empty()) {
+                tray.filament_name = filament_data.name;
+            }
+            if (tray.filament_name.empty()) {
+                tray.filament_name = tool_idx < static_cast<int>(tool_names.size()) ? tool_names[tool_idx] :
+                                                                                      "tool T" + std::to_string(lane_index);
+            }
+            tray.vendor_name = filament_data.vendor_name;
+            tray.tray_type   = filament_data.material;
+            if (!filament_data.color_hex.empty()) {
+                tray.tray_color = filament_data.color_hex;
+            }
+            if (filament_data.nozzle_temp > 0) {
+                tray.nozzle_temp = filament_data.nozzle_temp;
+            }
+            if (filament_data.bed_temp > 0) {
+                tray.bed_temp = filament_data.bed_temp;
+            }
+
+            tray.has_filament  = !tray.spoolman_id.empty() || !tray.tray_type.empty();
+            auto* bundle       = GUI::wxGetApp().preset_bundle;
+            tray.tray_info_idx = bundle ? bundle->filaments.filament_id_by_type(tray.tray_type) :
+                                          map_filament_type_to_generic_id(tray.tray_type);
+
+            max_lane_index = std::max(max_lane_index, lane_index);
+            trays.push_back(std::move(tray));
+            ++tool_idx;
+        }
+    } else {
+        for (const auto& [lane_key, lane_obj] : value.items()) {
+            if (!lane_obj.is_object()) {
+                continue;
+            }
+
+            // Extract lane index from the "lane" field (tool number, 0-based)
+            std::string lane_str   = safe_string(lane_obj, "lane");
+            int         lane_index = -1;
+            if (!lane_str.empty()) {
+                try {
+                    lane_index = std::stoi(lane_str);
+                } catch (...) {
+                    lane_index = -1;
+                }
+            }
+
+            if (lane_index < 0) {
+                lane_index = safe_int(lane_obj, "tool");
+            }
+            if (lane_index < 0) {
+                lane_index = safe_int(lane_obj, "tool_number");
+            }
+            if (lane_index < 0) {
+                continue;
+            }
+
+            AmsTrayData tray;
+            tray.slot_index  = lane_index;
+            tray.tray_color  = safe_string(lane_obj, "color");
+            tray.tray_type   = safe_string(lane_obj, "material");
+            tray.spoolman_id = safe_string_or_number(lane_obj, "spoolman_id");
+            if (tray.spoolman_id.empty()) {
+                tray.spoolman_id = safe_string_or_number(lane_obj, "spool_id");
+            }
+            if (tray.spoolman_id.empty() && lane_obj.contains("spool")) {
+                const auto& spool_value = lane_obj["spool"];
+                if (spool_value.is_object()) {
+                    tray.spoolman_id = safe_string_or_number(spool_value, "id");
+                    if (tray.spoolman_id.empty())
+                        tray.spoolman_id = safe_string_or_number(spool_value, "spool_id");
+                } else if (spool_value.is_string() || spool_value.is_number_integer() || spool_value.is_number()) {
+                    tray.spoolman_id = spool_value.dump();
+                    if (spool_value.is_string())
+                        tray.spoolman_id = spool_value.get<std::string>();
+                }
+            }
+            auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
+            if (tray.spoolman_id.empty() && !filament_data.spool_id.empty()) {
+                tray.spoolman_id = filament_data.spool_id;
+            }
+            tray.filament_name = build_display_name(filament_data);
+            if (tray.filament_name.empty()) {
+                tray.filament_name = filament_data.name;
+            }
+            tray.vendor_name = filament_data.vendor_name;
+            if (tray.filament_name.empty()) {
+                tray.filament_name = safe_string(lane_obj, "name");
+            }
+            if (tray.filament_name.empty()) {
+                tray.filament_name = safe_string(lane_obj, "spool_name");
+            }
+            if (tray.filament_name.empty()) {
+                tray.filament_name = safe_string(lane_obj, "filament_name");
+            }
+            if (tray.filament_name.empty()) {
+                tray.filament_name = safe_string(lane_obj, "material");
+            }
+            if (tray.tray_type.empty() && !filament_data.material.empty()) {
+                tray.tray_type = filament_data.material;
+            }
+            if (tray.tray_type.empty()) {
+                tray.tray_type = safe_string(lane_obj, "material");
+            }
+            if (tray.nozzle_temp == 0 && filament_data.nozzle_temp > 0) {
+                tray.nozzle_temp = filament_data.nozzle_temp;
+            }
+            if (tray.bed_temp == 0 && filament_data.bed_temp > 0) {
+                tray.bed_temp = filament_data.bed_temp;
+            }
+            if (tray.tray_color.empty() && !filament_data.color_hex.empty()) {
+                tray.tray_color = filament_data.color_hex;
+            }
+            int lane_bed_temp    = safe_int(lane_obj, "bed_temp");
+            int lane_nozzle_temp = safe_int(lane_obj, "nozzle_temp");
+            if (lane_bed_temp > 0) {
+                tray.bed_temp = lane_bed_temp;
+            }
+            if (lane_nozzle_temp > 0) {
+                tray.nozzle_temp = lane_nozzle_temp;
+            }
+            tray.has_filament  = !tray.tray_type.empty();
+            auto* bundle       = GUI::wxGetApp().preset_bundle;
+            tray.tray_info_idx = bundle ? bundle->filaments.filament_id_by_type(tray.tray_type) :
+                                          map_filament_type_to_generic_id(tray.tray_type);
+
+            max_lane_index = std::max(max_lane_index, lane_index);
+            trays.push_back(tray);
+        }
     }
 
     if (trays.empty()) {
-        BOOST_LOG_TRIVIAL(info) << "MoonrakerPrinterAgent::fetch_filament_info: No AFC lanes found";
+        BOOST_LOG_TRIVIAL(info) << "MoonrakerPrinterAgent::fetch_filament_info: No lanes/tools found from AFC/HappyHare/toolchanger";
         return false;
     }
 

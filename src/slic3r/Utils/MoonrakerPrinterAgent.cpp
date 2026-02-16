@@ -667,13 +667,91 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         return value_out.is_object();
     };
 
+    auto build_happyhare_lane_data_from_mmu = [&](nlohmann::json& value_out) {
+        nlohmann::json response_json;
+        std::string    error;
+        if (!fetch_json("/printer/objects/query?mmu", response_json, error) || !response_json.contains("result") ||
+            !response_json["result"].contains("status") || !response_json["result"]["status"].contains("mmu") ||
+            !response_json["result"]["status"]["mmu"].is_object()) {
+            return false;
+        }
+
+        const auto& mmu = response_json["result"]["status"]["mmu"];
+
+        auto to_vector = [](const nlohmann::json& obj, const char* key) -> std::vector<nlohmann::json> {
+            std::vector<nlohmann::json> out;
+            auto                        it = obj.find(key);
+            if (it != obj.end() && it->is_array()) {
+                out.reserve(it->size());
+                for (const auto& item : *it)
+                    out.push_back(item);
+            }
+            return out;
+        };
+
+        std::vector<nlohmann::json> gate_material    = to_vector(mmu, "gate_material");
+        std::vector<nlohmann::json> gate_color       = to_vector(mmu, "gate_color");
+        std::vector<nlohmann::json> gate_temperature = to_vector(mmu, "gate_temperature");
+        std::vector<nlohmann::json> gate_status      = to_vector(mmu, "gate_status");
+        std::vector<nlohmann::json> gate_spool_id    = to_vector(mmu, "gate_spool_id");
+
+        size_t gate_count   = 0;
+        auto   num_gates_it = mmu.find("num_gates");
+        if (num_gates_it != mmu.end() && num_gates_it->is_number_integer()) {
+            gate_count = static_cast<size_t>(std::max(0, num_gates_it->get<int>()));
+        }
+        gate_count = std::max(gate_count, gate_material.size());
+        gate_count = std::max(gate_count, gate_color.size());
+        gate_count = std::max(gate_count, gate_temperature.size());
+        gate_count = std::max(gate_count, gate_status.size());
+        gate_count = std::max(gate_count, gate_spool_id.size());
+
+        if (gate_count == 0) {
+            return false;
+        }
+
+        value_out = nlohmann::json::object();
+        for (size_t gate = 0; gate < gate_count; ++gate) {
+            int status_val = -1;
+            if (gate < gate_status.size() && gate_status[gate].is_number_integer())
+                status_val = gate_status[gate].get<int>();
+
+            long long spool_id = -1;
+            if (gate < gate_spool_id.size() && gate_spool_id[gate].is_number_integer())
+                spool_id = gate_spool_id[gate].get<long long>();
+
+            bool is_empty = status_val <= 0 || spool_id <= 0;
+
+            nlohmann::json lane = nlohmann::json::object();
+            lane["lane"]        = std::to_string(gate);
+            lane["color"]       = (gate < gate_color.size() && gate_color[gate].is_string()) ? gate_color[gate].get<std::string>() : "";
+            lane["material"] = (gate < gate_material.size() && gate_material[gate].is_string()) ? gate_material[gate].get<std::string>() :
+                                                                                                  "";
+            lane["bed_temp"] = "";
+
+            if (is_empty) {
+                lane["nozzle_temp"] = "";
+                lane["spool_id"]    = nullptr;
+                lane["color"]       = "";
+                lane["material"]    = "";
+            } else {
+                lane["nozzle_temp"] = (gate < gate_temperature.size() && gate_temperature[gate].is_number()) ? gate_temperature[gate] : 200;
+                lane["spool_id"]    = spool_id;
+            }
+
+            value_out["lane" + std::to_string(gate)] = std::move(lane);
+        }
+
+        return !value_out.empty();
+    };
+
     nlohmann::json value;
     nlohmann::json toolchanger;
     FilamentSource source = FilamentSource::afc;
 
     if (get_namespace_value("lane_data", value) && !value.empty()) {
         source = FilamentSource::afc;
-    } else if ((get_namespace_value("happy_hare", value) || get_namespace_value("happyhare", value)) && !value.empty()) {
+    } else if (build_happyhare_lane_data_from_mmu(value) && !value.empty()) {
         source = FilamentSource::happyhare;
     } else {
         nlohmann::json response_json;

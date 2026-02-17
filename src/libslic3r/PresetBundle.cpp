@@ -2690,12 +2690,32 @@ static void apply_spoolman_settings_to_preset(Preset& preset, const std::string&
         }
     }
     if (bed_temp > 0) {
-        if (auto bed_opt = preset.config.option<ConfigOptionInts>("bed_temperature")) {
-            bed_opt->values = {bed_temp};
-        }
-        if (auto bed_first_opt = preset.config.option<ConfigOptionInts>("bed_temperature_initial_layer")) {
-            bed_first_opt->values = {bed_temp};
-        }
+        auto set_int_option = [&](const char* key, int value) {
+            if (auto opt = preset.config.option<ConfigOptionInts>(key)) {
+                opt->values = {value};
+            } else {
+                preset.config.set_key_value(key, new ConfigOptionInts{value});
+            }
+        };
+
+        set_int_option("bed_temperature", bed_temp);
+        set_int_option("bed_temperature_initial_layer", bed_temp);
+        set_int_option("first_layer_bed_temperature", bed_temp);
+
+        // Keep all build plate specific temperatures in sync with Spoolman bed temp.
+        set_int_option("supertack_plate_temp", bed_temp);
+        set_int_option("cool_plate_temp", bed_temp);
+        set_int_option("textured_cool_plate_temp", bed_temp);
+        set_int_option("eng_plate_temp", bed_temp);
+        set_int_option("hot_plate_temp", bed_temp);
+        set_int_option("textured_plate_temp", bed_temp);
+
+        set_int_option("supertack_plate_temp_initial_layer", bed_temp);
+        set_int_option("cool_plate_temp_initial_layer", bed_temp);
+        set_int_option("textured_cool_plate_temp_initial_layer", bed_temp);
+        set_int_option("eng_plate_temp_initial_layer", bed_temp);
+        set_int_option("hot_plate_temp_initial_layer", bed_temp);
+        set_int_option("textured_plate_temp_initial_layer", bed_temp);
     }
     auto notes_opt = preset.config.option<ConfigOptionStrings>("filament_notes");
     if (notes_opt) {

@@ -869,6 +869,27 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
         return data;
     };
 
+    auto merge_spoolman_data = [](SpoolmanFilamentData& target, const SpoolmanFilamentData& incoming) {
+        if (!incoming.name.empty())
+            target.name = incoming.name;
+        if (!incoming.spool_name.empty())
+            target.spool_name = incoming.spool_name;
+        if (!incoming.spool_id.empty())
+            target.spool_id = incoming.spool_id;
+        if (!incoming.filament_id.empty())
+            target.filament_id = incoming.filament_id;
+        if (incoming.nozzle_temp > 0)
+            target.nozzle_temp = incoming.nozzle_temp;
+        if (incoming.bed_temp > 0)
+            target.bed_temp = incoming.bed_temp;
+        if (!incoming.color_hex.empty())
+            target.color_hex = incoming.color_hex;
+        if (!incoming.vendor_name.empty())
+            target.vendor_name = incoming.vendor_name;
+        if (!incoming.material.empty())
+            target.material = incoming.material;
+    };
+
     auto fetch_spoolman_filament_data = [&](const std::string& spool_id) -> SpoolmanFilamentData {
         SpoolmanFilamentData data;
         if (spool_id.empty())
@@ -964,11 +985,11 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                 payload = &response_json["result"];
             }
             if (expect_spool && payload->is_object()) {
-                data = read_spoolman_spool_data(*payload);
+                merge_spoolman_data(data, read_spoolman_spool_data(*payload));
                 return !data.spool_name.empty() || !data.name.empty();
             }
             if (!expect_spool && payload->is_object()) {
-                data = read_spoolman_filament_data(*payload);
+                merge_spoolman_data(data, read_spoolman_filament_data(*payload));
                 return !data.name.empty();
             }
             if (expect_spool && payload->is_array()) {
@@ -977,7 +998,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                         continue;
                     auto entry_id = safe_string_or_number(entry, "id");
                     if (entry_id == spool_id) {
-                        data = read_spoolman_spool_data(entry);
+                        merge_spoolman_data(data, read_spoolman_spool_data(entry));
                         return !data.spool_name.empty() || !data.name.empty();
                     }
                 }
@@ -988,7 +1009,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                         continue;
                     auto entry_id = safe_string_or_number(entry, "id");
                     if (entry_id == spool_id) {
-                        data = read_spoolman_filament_data(entry);
+                        merge_spoolman_data(data, read_spoolman_filament_data(entry));
                         return !data.name.empty();
                     }
                 }
@@ -1056,7 +1077,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                     spool_json = &proxy_json["result"];
                 }
                 if (spool_json->is_object()) {
-                    data = read_spoolman_spool_data(*spool_json);
+                    merge_spoolman_data(data, read_spoolman_spool_data(*spool_json));
                     if (!data.spool_name.empty() || !data.name.empty()) {
                         if (data.name.empty() && !data.filament_id.empty()) {
                             proxy_path = "/server/spoolman/proxy?path=/api/v1/filament/" + data.filament_id;
@@ -1084,7 +1105,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                                         filament_json = &proxy_filament_json["result"];
                                     }
                                     if (filament_json->is_object()) {
-                                        data = read_spoolman_filament_data(*filament_json);
+                                        merge_spoolman_data(data, read_spoolman_filament_data(*filament_json));
                                     }
                                 }
                             }
@@ -1121,7 +1142,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                     filament_json = &proxy_json["result"];
                 }
                 if (filament_json->is_object()) {
-                    data = read_spoolman_filament_data(*filament_json);
+                    merge_spoolman_data(data, read_spoolman_filament_data(*filament_json));
                     if (!data.name.empty())
                         return data;
                 }
@@ -1154,7 +1175,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                         continue;
                     auto entry_id = safe_string_or_number(entry, "id");
                     if (entry_id == spool_id) {
-                        data = read_spoolman_spool_data(entry);
+                        merge_spoolman_data(data, read_spoolman_spool_data(entry));
                         if (!data.name.empty() || !data.spool_name.empty()) {
                             if (data.name.empty() && !data.filament_id.empty()) {
                                 proxy_path = "/server/spoolman/proxy?path=/api/v1/filament/" + data.filament_id;
@@ -1182,7 +1203,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                                             filament_json = &proxy_filament_json["result"];
                                         }
                                         if (filament_json->is_object()) {
-                                            data = read_spoolman_filament_data(*filament_json);
+                                            merge_spoolman_data(data, read_spoolman_filament_data(*filament_json));
                                         }
                                     }
                                 }
@@ -1219,7 +1240,7 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                         continue;
                     auto entry_id = safe_string_or_number(entry, "id");
                     if (entry_id == spool_id) {
-                        data = read_spoolman_filament_data(entry);
+                        merge_spoolman_data(data, read_spoolman_filament_data(entry));
                         if (!data.name.empty())
                             return data;
                     }

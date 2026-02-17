@@ -971,6 +971,17 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
                 data = read_spoolman_filament_data(*payload);
                 return !data.name.empty();
             }
+            if (expect_spool && payload->is_array()) {
+                for (const auto& entry : *payload) {
+                    if (!entry.is_object())
+                        continue;
+                    auto entry_id = safe_string_or_number(entry, "id");
+                    if (entry_id == spool_id) {
+                        data = read_spoolman_spool_data(entry);
+                        return !data.spool_name.empty() || !data.name.empty();
+                    }
+                }
+            }
             if (!expect_spool && payload->is_array()) {
                 for (const auto& entry : *payload) {
                     if (!entry.is_object())
@@ -989,25 +1000,32 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             if (filament_id.empty()) {
                 return false;
             }
-            return read_spoolman_response(fetch_spoolman_url("/api/v1/filament/" + filament_id), false);
+            if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament/" + filament_id), false)) {
+                return true;
+            }
+            return read_spoolman_response(fetch_spoolman_url("/api/v1/filaments/" + filament_id), false);
         };
 
-        if (read_spoolman_response(fetch_spoolman_url("/api/v1/spool/" + spool_id), true)) {
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/spool/" + spool_id), true) ||
+            read_spoolman_response(fetch_spoolman_url("/api/v1/spools/" + spool_id), true)) {
             if (data.name.empty() && !data.filament_id.empty()) {
                 fetch_filament_from_id(data.filament_id);
             }
             return data;
         }
-        if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament/" + spool_id), false)) {
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament/" + spool_id), false) ||
+            read_spoolman_response(fetch_spoolman_url("/api/v1/filaments/" + spool_id), false)) {
             return data;
         }
-        if (read_spoolman_response(fetch_spoolman_url("/api/v1/spool"), true)) {
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/spool"), true) ||
+            read_spoolman_response(fetch_spoolman_url("/api/v1/spools"), true)) {
             if (data.name.empty() && !data.filament_id.empty()) {
                 fetch_filament_from_id(data.filament_id);
             }
             return data;
         }
-        if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament"), false)) {
+        if (read_spoolman_response(fetch_spoolman_url("/api/v1/filament"), false) ||
+            read_spoolman_response(fetch_spoolman_url("/api/v1/filaments"), false)) {
             return data;
         }
 

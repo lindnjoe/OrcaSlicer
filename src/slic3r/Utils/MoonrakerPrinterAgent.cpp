@@ -1309,6 +1309,20 @@ bool MoonrakerPrinterAgent::fetch_filament_info(std::string dev_id)
             }
         }
         auto filament_data = fetch_spoolman_filament_data(tray.spoolman_id);
+        // Orca: diagnose sparse Spoolman responses. If fetch returns only
+        // material (no vendor, no spool name, no filament name) the synced
+        // preset will end up with a fallback name like "PLA #4" because
+        // build_display_name has nothing better to work with. Logging at
+        // info-level lets users see in their own log whether the backend is
+        // unreachable, returning partial data, or completely missing this
+        // spool - without having to reproduce and rebuild with extra traces.
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__
+                                << " spoolman fetch for spool_id='" << tray.spoolman_id
+                                << "' -> spool_name='" << filament_data.spool_name
+                                << "' filament_name='" << filament_data.name
+                                << "' vendor='" << filament_data.vendor_name
+                                << "' material='" << filament_data.material
+                                << "' filament_id='" << filament_data.filament_id << "'";
         if (tray.spoolman_id.empty() && !filament_data.spool_id.empty()) {
             tray.spoolman_id = filament_data.spool_id;
         }

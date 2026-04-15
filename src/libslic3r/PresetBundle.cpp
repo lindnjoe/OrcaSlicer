@@ -2620,19 +2620,6 @@ static std::optional<std::string> find_filament_id_by_name_and_type(const Preset
     return std::nullopt;
 }
 
-static bool has_user_filament_id(const PresetCollection& filaments, const std::string& filament_id)
-{
-    if (filament_id.empty())
-        return false;
-    for (const auto& preset : filaments.get_presets()) {
-        if (!preset.is_user())
-            continue;
-        if (preset.filament_id == filament_id)
-            return true;
-    }
-    return false;
-}
-
 static std::string create_spoolman_filament_id(const PresetCollection& filaments, const std::string& spoolman_id)
 {
     std::string candidate    = "P" + calculate_md5("spoolman:" + spoolman_id).substr(0, 7);
@@ -2972,9 +2959,25 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         };
         auto spool_display_name = spoolman_id.empty() ? filament_name :
                                                         build_spool_name(filament_name, filament_type, spoolman_id, spoolman_vendor);
+        // Orca: detailed per-tray diagnostics so users can pinpoint why an
+        // overwrite sync didn't create a preset or didn't match by Spoolman ID.
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__
+                                << boost::format(" tray ams_id=%1% slot_id=%2% filament_id='%3%' spoolman_id='%4%' "
+                                                 "type='%5%' name='%6%' vendor='%7%' placeholder=%8% overwrite=%9%")
+                                       % ams_id % slot_id % filament_id % spoolman_id % filament_type
+                                       % filament_name % spoolman_vendor % is_placeholder % overwrite_mode;
+        // Orca: track whether any path already resolved this spool to an
+        // existing preset (by spoolman_id or by name). We gate the "create
+        // new Spoolman-backed preset" step on this rather than on whether
+        // any user preset shares the system filament_id (which would
+        // spuriously block creation when the user has a plain cloned
+        // "Generic PLA" that still inherits filament_id "GFL00").
+        bool matched_existing_preset = false;
         if (!spoolman_id.empty()) {
             if (auto matched_id = find_filament_id_by_spoolman_id(filaments, spoolman_id)) {
                 filament_id = *matched_id;
+                matched_existing_preset = true;
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " matched by spoolman_id -> filament_id=" << filament_id;
                 if (overwrite_mode) {
                     update_spoolman_metadata(filaments, filament_id, spoolman_id, spool_display_name, filament_type, spoolman_vendor,
                                              compatible_printers, nozzle_temp, bed_temp);
@@ -3001,6 +3004,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             }
             if (matched_id) {
                 filament_id = *matched_id;
+                matched_existing_preset = true;
                 if (overwrite_mode && !spoolman_id.empty()) {
                     update_spoolman_metadata(filaments, filament_id, spoolman_id, spool_display_name, filament_type, spoolman_vendor,
                                              compatible_printers, nozzle_temp, bed_temp);
@@ -3022,6 +3026,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             }
             if (matched_id) {
                 filament_id = *matched_id;
+                matched_existing_preset = true;
                 if (overwrite_mode) {
                     update_spoolman_metadata(filaments, filament_id, spoolman_id, filament_name, filament_type, spoolman_vendor,
                                              compatible_printers, nozzle_temp, bed_temp);
@@ -3036,11 +3041,25 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 }
             }
         }
-        if (overwrite_mode && !spoolman_id.empty() && (filament_id.empty() || !has_user_filament_id(filaments, filament_id))) {
+        // Orca: create a new Spoolman-backed user preset unless we already
+        // matched an existing preset (by spoolman_id or by name). Previously
+        // this was gated on has_user_filament_id(filament_id), but
+        // filament_id at this point usually equals the system base's id
+        // (e.g. "GFL00") pulled from tray.setting_id. Any user who had
+        // cloned "Generic PLA" at least once would see has_user_filament_id
+        // return true and silently skip per-spool preset creation, which is
+        // exactly the reported symptom ("only color and type get applied").
+        if (overwrite_mode && !spoolman_id.empty() && !matched_existing_preset) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__
+                                    << " attempting to create spoolman-backed user preset for spoolman_id=" << spoolman_id
+                                    << " (current filament_id='" << filament_id << "', matched_existing="
+                                    << matched_existing_preset << ")";
             const Preset* base_preset = find_base_filament_preset(filaments, filament_id, filament_type);
             if (base_preset) {
                 std::string preset_name     = build_spool_name(filament_name, filament_type, spoolman_id, spoolman_vendor);
                 std::string new_filament_id = create_spoolman_filament_id(filaments, spoolman_id);
+                BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " base_preset='" << base_preset->name
+                                        << "' new_preset_name='" << preset_name << "' new_filament_id=" << new_filament_id;
                 bool created = create_spoolman_filament_preset(filaments, *base_preset, preset_name, printers.get_selected_preset_name(),
                                                                compatible_printers, new_filament_id, filament_type, spoolman_vendor,
                                                                spoolman_id, nozzle_temp, bed_temp);
@@ -3053,10 +3072,19 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     ams.set_key_value("filament_spoolman_id", new ConfigOptionStrings{normalized_spoolman_id});
                     ams.set_key_value("spoolman_id", new ConfigOptionStrings{normalized_spoolman_id});
                     ams.set_key_value("spool_id", new ConfigOptionStrings{normalized_spoolman_id});
+                    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " created spoolman preset '" << preset_name << "'";
                 } else {
                     BOOST_LOG_TRIVIAL(warning) << __FUNCTION__ << " failed to clone spoolman filament preset for " << spoolman_id;
                 }
+            } else {
+                BOOST_LOG_TRIVIAL(warning) << __FUNCTION__
+                                           << " no base preset found for spoolman_id=" << spoolman_id
+                                           << " type='" << filament_type << "'. Skipping preset creation.";
             }
+        } else if (overwrite_mode && !spoolman_id.empty()) {
+            BOOST_LOG_TRIVIAL(info) << __FUNCTION__
+                                    << " skipping spoolman preset creation for spoolman_id=" << spoolman_id
+                                    << " (already matched existing preset filament_id='" << filament_id << "')";
         }
         if (!spoolman_id.empty() && !filament_id.empty()) {
             ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
@@ -3192,6 +3220,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                          L("The filament model is unknown. A random filament preset will be used.")));
             filament_id = iter->filament_id;
         }
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " pushed preset '" << iter->name << "' for filament_id=" << filament_id;
         ams_filament_presets.push_back(iter->name);
         ams_filament_colors.push_back(filament_color);
         ams_filament_color_types.push_back(filament_color_type);

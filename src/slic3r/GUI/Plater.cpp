@@ -3309,7 +3309,10 @@ std::map<int, DynamicPrintConfig> Sidebar::build_filament_ams_list(MachineObject
     // For pull-mode agents (e.g., HTTP REST API), refresh DevFilaSystem first
     auto* agent = wxGetApp().getDeviceManager()->get_agent();
     if (agent && agent->get_filament_sync_mode() == FilamentSyncMode::pull) {
-        if (!agent->fetch_filament_info(obj->get_dev_id())) {
+        const bool ok = agent->fetch_filament_info(obj->get_dev_id());
+        BOOST_LOG_TRIVIAL(info) << "build_filament_ams_list: pull-mode fetch_filament_info("
+                                 << obj->get_dev_id() << ") returned " << (ok ? "true" : "false");
+        if (!ok) {
             return filament_ams_list;
         }
     }
@@ -3480,9 +3483,28 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
 {
     wxBusyCursor cursor;
     // Force load ams list
-    auto obj = wxGetApp().getDeviceManager()->get_selected_machine();
-    if (!obj)
+    auto* dev = wxGetApp().getDeviceManager();
+    auto obj = dev ? dev->get_selected_machine() : nullptr;
+
+    // Orca: If no machine is explicitly selected yet (common when the user
+    // connected to a Moonraker/Klipper printer but never opened the Monitor
+    // tab), try to auto-select one from the discovered list so sync isn't a
+    // silent no-op. This mirrors what MonitorPanel::Show() does on first open.
+    if (!obj && dev) {
+        dev->load_last_machine();
+        obj = dev->get_selected_machine();
+    }
+
+    if (!obj) {
+        BOOST_LOG_TRIVIAL(warning) << "sync_ams_list: no selected machine; nothing to sync. "
+                                      "Open the Device tab and pick your printer first.";
+        auto printer_name = p->plater->get_selected_printer_name_in_combox();
+        p->plater->pop_warning_and_go_to_device_page(printer_name, Plater::PrinterWarningType::NOT_CONNECTED, _L("Sync printer information"));
         return;
+    }
+    BOOST_LOG_TRIVIAL(info) << "sync_ams_list: selected_machine dev_id=" << obj->get_dev_id()
+                             << " ip=" << obj->get_dev_ip()
+                             << " connection_type=" << obj->dev_connection_type;
     GUI::wxGetApp().sidebar().load_ams_list(obj);
 
     auto & list = wxGetApp().preset_bundle->filament_ams_list;
@@ -3510,6 +3532,9 @@ void Sidebar::sync_ams_list(bool is_from_big_sync_btn)
         return;
     }
     if (!wxGetApp().plater()->is_same_printer_for_connected_and_selected()) {
+        BOOST_LOG_TRIVIAL(warning) << "sync_ams_list: is_same_printer_for_connected_and_selected() returned false; "
+                                       "selected printer preset doesn't match the connected printer (or "
+                                       "check_printer_initialized failed). Aborting sync.";
         return;
     }
     std::string ams_filament_ids = wxGetApp().app_config->get("ams_filament_ids", p->ams_list_device);
@@ -14794,17 +14819,25 @@ bool Plater::check_printer_initialized(MachineObject *obj, bool only_warning, bo
 
     bool has_been_initialized = true;
 
-    const auto& extruders = obj->GetExtderSystem()->GetExtruders();
-    for (const DevExtder& extruder : extruders) {
-        if (obj->is_multi_extruders()) {
+    // Orca: NozzleFlowType is only populated by Bambu firmware status reports.
+    // Klipper/Moonraker (and other non-BBL host-mode printers) leave this as
+    // NONE_FLOWTYPE, which would otherwise silently fail the AMS sync check.
+    // Skip the nozzle-flow gate for non-BBL vendors.
+    const bool is_bbl = wxGetApp().preset_bundle && wxGetApp().preset_bundle->is_bbl_vendor();
+
+    if (is_bbl) {
+        const auto& extruders = obj->GetExtderSystem()->GetExtruders();
+        for (const DevExtder& extruder : extruders) {
+            if (obj->is_multi_extruders()) {
+                if (extruder.GetNozzleFlowType() == NozzleFlowType::NONE_FLOWTYPE) {
+                    has_been_initialized = false;
+                    break;
+                }
+            }
             if (extruder.GetNozzleFlowType() == NozzleFlowType::NONE_FLOWTYPE) {
                 has_been_initialized = false;
                 break;
             }
-        }
-        if (extruder.GetNozzleFlowType() == NozzleFlowType::NONE_FLOWTYPE) {
-            has_been_initialized = false;
-            break;
         }
     }
 
@@ -16913,16 +16946,28 @@ bool Plater::is_same_printer_for_connected_and_selected(bool popup_warning)
     }
     if (!check_printer_initialized(obj, true, popup_warning))
         return false;
-    Preset *      machine_preset     = get_printer_preset(obj);
-    if (!machine_preset)
-        return false;
 
-    if (wxGetApp().is_blocking_printing()) {
-        if (popup_warning) {
-            auto printer_name = get_selected_printer_name_in_combox(); // wxString(obj->get_preset_printer_model_name(machine_print_name))
-            pop_warning_and_go_to_device_page(printer_name, PrinterWarningType::INCONSISTENT, _L("Synchronize AMS Filament Information"));
+    // Orca: get_printer_preset() only matches *system* printer presets by
+    // exact printer_type + nozzle-diameter. For non-BBL setups (Moonraker /
+    // Klipper, Snapmaker, Qidi, generic Marlin user presets) the selected
+    // preset is typically a user preset and the nozzle diameter isn't
+    // populated on the MachineObject, so this returns null and AMS sync
+    // silently fails. Only enforce the system-preset match for BBL vendors;
+    // for other vendors the connected agent already scopes to the active
+    // preset, so the currently-selected printer is the right target.
+    const bool is_bbl = wxGetApp().preset_bundle && wxGetApp().preset_bundle->is_bbl_vendor();
+    if (is_bbl) {
+        Preset *machine_preset = get_printer_preset(obj);
+        if (!machine_preset)
+            return false;
+
+        if (wxGetApp().is_blocking_printing()) {
+            if (popup_warning) {
+                auto printer_name = get_selected_printer_name_in_combox(); // wxString(obj->get_preset_printer_model_name(machine_print_name))
+                pop_warning_and_go_to_device_page(printer_name, PrinterWarningType::INCONSISTENT, _L("Synchronize AMS Filament Information"));
+            }
+            return false;
         }
-        return false;
     }
     return true;
 }

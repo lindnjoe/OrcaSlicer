@@ -2937,7 +2937,16 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 bool is_numeric = !check.empty() &&
                                   std::all_of(check.begin(), check.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
                 bool looks_like_id = (!spool_id.empty() && (check == spool_id || result == spool_id)) || is_numeric;
-                if (looks_like_id) {
+                // Orca: when Spoolman returns sparse data the upstream
+                // build_display_name falls back to the raw material string
+                // (e.g. "PLA"), which then lands here as a name identical
+                // to the filament type. That produces preset names like
+                // "PLA #4" that look indistinguishable from generics and
+                // confuse users ("sync didn't find my real Spoolman info").
+                // Treat that case the same as an empty name so the fallback
+                // below prepends "Spoolman" and makes the binding obvious.
+                bool looks_like_bare_type = !type.empty() && boost::iequals(result, type);
+                if (looks_like_id || looks_like_bare_type) {
                     result.clear();
                 }
             }
@@ -2950,6 +2959,11 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 }
                 if (result.empty()) {
                     result = "Spoolman";
+                } else if (vendor.empty()) {
+                    // Mark the preset as Spoolman-sourced so users can tell
+                    // it apart from "Generic <type>" at a glance when the
+                    // backend didn't give us a vendor/filament name.
+                    result = "Spoolman " + result;
                 }
             }
             if (!spool_id.empty() && result.find(spool_id) == std::string::npos) {

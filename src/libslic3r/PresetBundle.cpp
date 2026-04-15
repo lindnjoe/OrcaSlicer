@@ -14,6 +14,7 @@
 #include <cstring>
 #include <set>
 #include <fstream>
+#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
 #include <boost/filesystem.hpp>
@@ -3088,8 +3089,15 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     filament_multi_color.push_back(default_unknown_color);
                 }
                 ams_multi_color_filment.push_back(filament_multi_color);
-            } else if (is_placeholder) {
-                // Orca: push placeholders to keep index alignment with ams_infos
+            } else {
+                // Orca: always push a placeholder entry so the position-aligned
+                // arrays (ams_filament_presets/colors/color_types/multi_color)
+                // stay 1:1 with ams_infos / ams_tool_numbers. Without this, a
+                // tray whose filament_id cannot be resolved (empty Spoolman
+                // match, unknown Generic base, etc.) would desync every
+                // subsequent slot's preset lookup in the overwrite-merge
+                // branch, which is why overwrite sync previously only applied
+                // colors/types and left the preset names untouched.
                 ams_filament_presets.push_back("");
                 ams_filament_colors.push_back("");
                 ams_filament_color_types.push_back("");
@@ -3309,10 +3317,16 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             if (maps.find(i) != maps.end()) { // mapping exist
                 auto valid_index = get_map_index(ams_array_maps, maps[i]);
                 if (valid_index >= 0 && valid_index < ams_filament_presets.size()) {
-                    exist_colors[i]              = ams_filament_colors[valid_index];
-                    exist_color_types[i]         = ams_filament_color_types[valid_index];
-                    exist_filament_presets[i]    = ams_filament_presets[valid_index];
-                    exist_multi_color_filment[i] = ams_multi_color_filment[valid_index];
+                    // Orca: if the mapped tray slot is empty (placeholder or
+                    // unresolved filament_id), don't overwrite the existing
+                    // preset/color with empty strings.
+                    const bool tray_has_preset = !ams_filament_presets[valid_index].empty();
+                    if (tray_has_preset) {
+                        exist_colors[i]              = ams_filament_colors[valid_index];
+                        exist_color_types[i]         = ams_filament_color_types[valid_index];
+                        exist_filament_presets[i]    = ams_filament_presets[valid_index];
+                        exist_multi_color_filment[i] = ams_multi_color_filment[valid_index];
+                    }
                 } else {
                     BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << "check error: array bound (mapping exist)";
                 }
@@ -3416,9 +3430,24 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                     // Loaded tray: use tray's filament data
                     auto tray_color      = get_or_default(ams_filament_colors, i, "#CECECE");
                     auto tray_color_type = get_or_default(ams_filament_color_types, i, "1");
+                    // Orca: prefer the freshly-synced tray preset; if the tray
+                    // entry is empty (e.g. Spoolman preset creation failed, or
+                    // the base preset lookup produced no candidate) fall back
+                    // to the user's existing preset in this slot before
+                    // resorting to first_visible(). Without this guard the
+                    // overwrite sync would silently wipe the user's preset
+                    // name while still writing the AMS color/type, which
+                    // looked like "only color and type synced".
+                    std::string tray_preset = get_or_default(ams_filament_presets, i, std::string());
+                    if (tray_preset.empty()) {
+                        if (i < exist_presets.size() && !exist_presets[i].empty())
+                            tray_preset = exist_presets[i];
+                        else
+                            tray_preset = this->filaments.first_visible().name;
+                    }
                     result_colors.push_back(tray_color);
                     result_color_types.push_back(tray_color_type);
-                    result_presets.push_back(get_or_default(ams_filament_presets, i, this->filaments.first_visible().name));
+                    result_presets.push_back(tray_preset);
                     result_multi_colors.push_back(i < ams_multi_color_filment.size() ? ams_multi_color_filment[i] :
                                                                                        std::vector<std::string>{tray_color});
                 } else if (i < exist_presets.size()) {
@@ -3491,6 +3520,18 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             }
         }
         tool_num_opt->values = std::move(tool_numbers);
+    }
+
+    // Orca: log the resulting filament_presets so users can inspect whether the
+    // overwrite/mapping applied the expected preset names for each AFC slot.
+    {
+        std::ostringstream oss;
+        for (size_t i = 0; i < this->filament_presets.size(); ++i) {
+            if (i)
+                oss << ", ";
+            oss << i << "=\"" << this->filament_presets[i] << "\"";
+        }
+        BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << " resulting filament_presets: " << oss.str();
     }
 
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "finish sync ams list";

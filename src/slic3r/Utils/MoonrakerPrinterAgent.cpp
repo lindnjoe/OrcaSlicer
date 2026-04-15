@@ -20,7 +20,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cctype>
+#include <limits>
 #include <map>
+#include <numeric>
 #include <thread>
 
 namespace {
@@ -573,7 +575,7 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, int max_lane_index,
     }
 
     if (use_unit_grouping) {
-        // Group by (unit_name, extruder_tool_number), preserving original order.
+        // Group by (unit_name, extruder_tool_number).
         struct GroupKey
         {
             std::string unit;
@@ -600,6 +602,45 @@ void MoonrakerPrinterAgent::build_ams_payload(int ams_count, int max_lane_index,
             std::sort(g.begin(), g.end(),
                       [](const AmsTrayData* a, const AmsTrayData* b) { return a->slot_index < b->slot_index; });
         }
+
+        // Orca: sort groups by unit name (case-insensitive) so the sidebar
+        // always shows units alphabetically — A unit first, B second, C third
+        // — regardless of which lane# happens to appear first in the AFC JSON
+        // iteration order. Users configure AFC so that e.g. "Unit A" starts
+        // at lane 4 and "Unit C" starts at lane 0, and they expect A1 to map
+        // to the first Orca filament slot, not C1. Ties broken by extruder
+        // tool number, then by the group's lowest slot_index.
+        std::vector<size_t> order(groups.size());
+        std::iota(order.begin(), order.end(), 0);
+        auto to_lower = [](std::string s) {
+            std::transform(s.begin(), s.end(), s.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return s;
+        };
+        auto group_min_slot = [&](size_t gi) {
+            int m = std::numeric_limits<int>::max();
+            for (const auto* t : groups[gi])
+                m = std::min(m, t->slot_index);
+            return m;
+        };
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            auto ua = to_lower(group_order[a].unit);
+            auto ub = to_lower(group_order[b].unit);
+            if (ua != ub) return ua < ub;
+            if (group_order[a].tool != group_order[b].tool)
+                return group_order[a].tool < group_order[b].tool;
+            return group_min_slot(a) < group_min_slot(b);
+        });
+        std::vector<GroupKey>                        reordered_keys;
+        std::vector<std::vector<const AmsTrayData*>> reordered_groups;
+        reordered_keys.reserve(order.size());
+        reordered_groups.reserve(order.size());
+        for (size_t idx : order) {
+            reordered_keys.push_back(std::move(group_order[idx]));
+            reordered_groups.push_back(std::move(groups[idx]));
+        }
+        group_order = std::move(reordered_keys);
+        groups      = std::move(reordered_groups);
 
         int next_ams_id = 0;
         for (size_t gi = 0; gi < groups.size(); ++gi) {

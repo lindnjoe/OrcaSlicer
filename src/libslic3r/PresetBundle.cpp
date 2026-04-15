@@ -42,7 +42,7 @@ static std::vector<std::string> s_project_options{"flush_volumes_vector", "flush
                                                   // BBS
                                                   "filament_colour", "filament_colour_type", "filament_multi_colour", "wipe_tower_x",
                                                   "wipe_tower_y", "wipe_tower_rotation_angle", "curr_bed_type", "flush_multiplier",
-                                                  "nozzle_volume_type", "filament_map_mode", "filament_map"};
+                                                  "nozzle_volume_type", "filament_map_mode", "filament_map", "filament_map_tool_number"};
 
 // Orca: add custom as default
 const char* PresetBundle::ORCA_DEFAULT_BUNDLE          = "Custom";
@@ -730,9 +730,16 @@ void PresetBundle::reset_project_embedded_presets()
                 current_printer.config.option<ConfigOptionStrings>("default_filament_profile")->values;
             const std::string prefered_filament_profile = prefered_filament_profiles.empty() ? std::string() :
                                                                                                prefered_filament_profiles.front();
-            if (!prefered_filament_profile.empty())
-                filament_presets[i] = prefered_filament_profile;
-            else
+            if (!prefered_filament_profile.empty()) {
+                // Check if preferred filament exists and is visible
+                const Preset* preferred_preset = this->filaments.find_preset(prefered_filament_profile, false);
+                if (preferred_preset && preferred_preset->is_visible) {
+                    filament_presets[i] = prefered_filament_profile;
+                } else {
+                    // Fall back to first visible filament
+                    filament_presets[i] = this->filaments.first_visible().name;
+                }
+            } else
                 filament_presets[i] = this->filaments.first_visible().name;
         }
     }
@@ -2027,8 +2034,14 @@ void PresetBundle::load_selections(AppConfig& config, const PresetPreferences& p
 
         const std::vector<std::string>& prefered_filament_profiles =
             preferred_printer->config.option<ConfigOptionStrings>("default_filament_profile")->values;
-        if ((!initial_filament_profile_name.compare("Default Filament")) && (prefered_filament_profiles.size() > 0))
-            initial_filament_profile_name = prefered_filament_profiles[0];
+        if ((!initial_filament_profile_name.compare("Default Filament")) && (prefered_filament_profiles.size() > 0)) {
+            // Check if preferred filament is visible
+            const Preset* preferred_preset = this->filaments.find_preset(prefered_filament_profiles[0], false);
+            if (preferred_preset && preferred_preset->is_visible) {
+                initial_filament_profile_name = prefered_filament_profiles[0];
+            }
+            // If not visible, keep the default "Default Filament" which will be resolved later
+        }
     }
 
     // Selects the profile, leaves it to -1 if the initial profile name is empty or if it was not found.
@@ -2839,13 +2852,22 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                                          bool                                                      use_map,
                                          std::map<int, AMSMapInfo>&                                maps,
                                          bool                                                      enable_append,
-                                         MergeFilamentInfo&                                        merge_info)
+                                         MergeFilamentInfo&                                        merge_info,
+                                         bool                                                      color_only)
 {
-    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "use_map:" << use_map << " enable_append:" << enable_append;
+    BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "use_map:" << use_map << " enable_append:" << enable_append
+                            << " color_only:" << color_only;
+    // When the user chose "Mapping" (use_map) or "Color only" the sync should not
+    // create or modify user filament profiles. Only in "Overwrite" mode do we
+    // materialize new Spoolman-backed user presets for newly synced spools.
+    const bool overwrite_mode = !use_map && !color_only;
     std::vector<std::string>                     ams_filament_presets;
     std::vector<std::string>                     ams_filament_colors;
     std::vector<std::string>                     ams_filament_color_types;
     std::vector<AMSMapInfo>                      ams_array_maps;
+    // Orca: per-tray AFC tool-number override gathered from filament_ams_list.
+    // Parallel to ams_filament_presets; index-aligned with the tray iteration.
+    std::vector<int>                             ams_tool_numbers;
     std::unordered_map<std::string, std::string> assigned_spoolman_ids;
     ams_multi_color_filment.clear();
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << boost::format(": filament_ams_list size: %1%") % filament_ams_list.size();
@@ -2952,8 +2974,10 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         if (!spoolman_id.empty()) {
             if (auto matched_id = find_filament_id_by_spoolman_id(filaments, spoolman_id)) {
                 filament_id = *matched_id;
-                update_spoolman_metadata(filaments, filament_id, spoolman_id, spool_display_name, filament_type, spoolman_vendor,
-                                         compatible_printers, nozzle_temp, bed_temp);
+                if (overwrite_mode) {
+                    update_spoolman_metadata(filaments, filament_id, spoolman_id, spool_display_name, filament_type, spoolman_vendor,
+                                             compatible_printers, nozzle_temp, bed_temp);
+                }
                 filament_changed = true;
                 ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
                 const auto normalized_spoolman_id = normalize_spoolman_id(spoolman_id);
@@ -2976,7 +3000,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             }
             if (matched_id) {
                 filament_id = *matched_id;
-                if (!spoolman_id.empty()) {
+                if (overwrite_mode && !spoolman_id.empty()) {
                     update_spoolman_metadata(filaments, filament_id, spoolman_id, spool_display_name, filament_type, spoolman_vendor,
                                              compatible_printers, nozzle_temp, bed_temp);
                 }
@@ -2997,8 +3021,10 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
             }
             if (matched_id) {
                 filament_id = *matched_id;
-                update_spoolman_metadata(filaments, filament_id, spoolman_id, filament_name, filament_type, spoolman_vendor,
-                                         compatible_printers, nozzle_temp, bed_temp);
+                if (overwrite_mode) {
+                    update_spoolman_metadata(filaments, filament_id, spoolman_id, filament_name, filament_type, spoolman_vendor,
+                                             compatible_printers, nozzle_temp, bed_temp);
+                }
                 filament_changed = true;
                 ams.set_key_value("filament_id", new ConfigOptionStrings{filament_id});
                 if (!spoolman_id.empty()) {
@@ -3009,7 +3035,7 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
                 }
             }
         }
-        if (!spoolman_id.empty() && (filament_id.empty() || !has_user_filament_id(filaments, filament_id))) {
+        if (overwrite_mode && !spoolman_id.empty() && (filament_id.empty() || !has_user_filament_id(filaments, filament_id))) {
             const Preset* base_preset = find_base_filament_preset(filaments, filament_id, filament_type);
             if (base_preset) {
                 std::string preset_name     = build_spool_name(filament_name, filament_type, spoolman_id, spoolman_vendor);
@@ -3038,6 +3064,14 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         ams_infos.push_back({filament_id.empty() ? false : true, false, is_placeholder, filament_color});
         AMSMapInfo temp = {ams_id, slot_id};
         ams_array_maps.push_back(temp);
+        // Orca: carry AFC T# override (from DevAmsTray::afc_tool_number via
+        // build_tray_config). -1 means "no override; emit filament index as T#".
+        int tray_tool_number = -1;
+        if (const auto* tool_opt = ams.option<ConfigOptionInts>("filament_map_tool_number")) {
+            if (!tool_opt->values.empty())
+                tray_tool_number = tool_opt->values.front();
+        }
+        ams_tool_numbers.push_back(tray_tool_number);
         index++;
         if (filament_id.empty()) {
             if (use_map) {
@@ -3165,8 +3199,72 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
         BOOST_LOG_TRIVIAL(error) << __FUNCTION__ << " missing project filament options for AMS sync";
         return 0;
     }
-    if (use_map) {
-        auto check_has_merge_info = [](std::map<int, AMSMapInfo>& maps, MergeFilamentInfo& merge_info, int exist_colors_size) {
+    if (color_only) {
+        auto get_map_index = [&ams_infos](const std::vector<AMSMapInfo> &infos, const AMSMapInfo &temp) {
+            for (int i = 0; i < infos.size(); i++) {
+                if (infos[i].slot_id == temp.slot_id && infos[i].ams_id == temp.ams_id) {
+                    ams_infos[i].is_map = true;
+                    return i;
+                }
+            }
+            return -1;
+        };
+
+        auto exist_colors = filament_color->values;
+        std::vector<std::vector<std::string>> exist_multi_color_filment(exist_colors.size());
+        for (size_t i = 0; i < exist_colors.size(); i++) {
+            exist_multi_color_filment[i] = {exist_colors[i]};
+        }
+
+        ConfigOptionStrings *project_multi_color = project_config.option<ConfigOptionStrings>("filament_multi_colour");
+        if (project_multi_color) {
+            for (size_t i = 0; i < std::min(exist_multi_color_filment.size(), project_multi_color->values.size()); i++) {
+                std::vector<std::string> colors = split_string(project_multi_color->values[i], ' ');
+                if (!colors.empty()) {
+                    exist_multi_color_filment[i] = colors;
+                }
+            }
+        }
+
+        bool mapped_any = false;
+        if (use_map && !maps.empty()) {
+            for (size_t i = 0; i < exist_colors.size(); i++) {
+                if (maps.find(i) == maps.end()) {
+                    continue;
+                }
+                int valid_index = get_map_index(ams_array_maps, maps[i]);
+                if (valid_index >= 0 && valid_index < int(ams_filament_colors.size()) && !ams_filament_colors[valid_index].empty()) {
+                    exist_colors[i] = ams_filament_colors[valid_index];
+                    mapped_any = true;
+                    if (valid_index < int(ams_multi_color_filment.size()) && !ams_multi_color_filment[valid_index].empty()) {
+                        exist_multi_color_filment[i] = ams_multi_color_filment[valid_index];
+                    } else {
+                        exist_multi_color_filment[i] = {ams_filament_colors[valid_index]};
+                    }
+                }
+            }
+        }
+        // Fallback to index-based color sync if no mapping was applied.
+        if (!use_map || maps.empty() || !mapped_any) {
+            size_t sync_count = std::min(exist_colors.size(), ams_filament_colors.size());
+            for (size_t i = 0; i < sync_count; i++) {
+                if (ams_filament_colors[i].empty()) {
+                    continue;
+                }
+                exist_colors[i] = ams_filament_colors[i];
+                if (i < ams_multi_color_filment.size() && !ams_multi_color_filment[i].empty()) {
+                    exist_multi_color_filment[i] = ams_multi_color_filment[i];
+                } else {
+                    exist_multi_color_filment[i] = {ams_filament_colors[i]};
+                }
+            }
+        }
+
+        filament_color->values = exist_colors;
+        ams_multi_color_filment = exist_multi_color_filment;
+        merge_info.merges.clear();
+    } else if (use_map) {
+        auto check_has_merge_info = [](std::map<int, AMSMapInfo> &maps, MergeFilamentInfo &merge_info, int exist_colors_size) {
             std::set<int> done;
             for (auto it_i = maps.begin(); it_i != maps.end(); ++it_i) {
                 std::vector<int> same_ams;
@@ -3369,6 +3467,32 @@ unsigned int PresetBundle::sync_ams_list(std::vector<std::pair<DynamicPrintConfi
     // Update ams_multi_color_filment
     update_filament_multi_color();
     update_multi_material_filament_presets();
+
+    // Orca: propagate AFC T# overrides to project_config->filament_map_tool_number
+    // so GCodeWriter::toolchange can remap T<filament_index> -> T<afc_tool_number>.
+    // In overwrite mode we carry the values position-for-position from the tray
+    // iteration. In use_map/color_only we preserve any existing values and just
+    // resize to match the final filament count.
+    if (auto* tool_num_opt = project_config.option<ConfigOptionInts>("filament_map_tool_number", true)) {
+        const size_t filament_count = this->filament_presets.size();
+        std::vector<int> tool_numbers(filament_count, -1);
+        if (!use_map && !color_only) {
+            // overwrite: ams_tool_numbers is index-aligned with the iteration
+            // that produced filament_presets (minus placeholders that were
+            // skipped; those keep -1 and are filled from existing values below).
+            for (size_t i = 0; i < filament_count && i < ams_tool_numbers.size(); ++i) {
+                tool_numbers[i] = ams_tool_numbers[i];
+            }
+        } else {
+            // Preserve existing overrides across non-overwrite syncs.
+            const auto& existing = tool_num_opt->values;
+            for (size_t i = 0; i < filament_count && i < existing.size(); ++i) {
+                tool_numbers[i] = existing[i];
+            }
+        }
+        tool_num_opt->values = std::move(tool_numbers);
+    }
+
     BOOST_LOG_TRIVIAL(info) << __FUNCTION__ << "finish sync ams list";
     return this->filament_presets.size();
 }
@@ -5126,7 +5250,7 @@ void PresetBundle::update_compatible(PresetSelectCompatibleType select_other_pri
         int operator()(const Preset& preset) const
         {
             // Don't match any properties of the "-- default --" profile or the external profiles when switching printer profile.
-            if (preset.is_default || preset.is_external)
+            if (preset.is_default || preset.is_external || !preset.is_visible)
                 return 0;
             if (!m_prefered_alias.empty() && m_prefered_alias == preset.alias)
                 // Matching an alias, always take this preset with priority.
